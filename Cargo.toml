@@ -1,0 +1,22 @@
+[package]
+name = "cohort_matching"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Caliper-based cohort matching with optional role switching for risk-set sampling"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tkragholm/cohort_matching"
+readme = "README.md"
+keywords = ["matching", "epidemiology", "cohort", "statistics", "healthcare"]
+categories = ["algorithms", "science"]
+exclude = ["target/", ".DS_Store"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+itertools = "0.14"
+rand = { version = "0.10" }
+serde = { version = "1", features = ["derive"] }
