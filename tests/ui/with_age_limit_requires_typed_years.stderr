@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+  --> tests/ui/with_age_limit_requires_typed_years.rs:13:66
+   |
+13 |     let _ = MatchJob::new_transition(&records, 0).with_age_limit(6).run();
+   |                                                   -------------- ^ expected `AgeLimitYears`, found integer
+   |                                                   |
+   |                                                   arguments to this method are incorrect
+   |
+note: method defined here
+  --> src/matching/job.rs
+   |
+   |     pub const fn with_age_limit(mut self, years: AgeLimitYears) -> Self {
+   |                  ^^^^^^^^^^^^^^

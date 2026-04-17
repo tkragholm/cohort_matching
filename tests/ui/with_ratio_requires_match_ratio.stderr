@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+  --> tests/ui/with_ratio_requires_match_ratio.rs:12:21
+   |
+12 |         .with_ratio(1)
+   |          ---------- ^ expected `MatchRatio`, found integer
+   |          |
+   |          arguments to this method are incorrect
+   |
+note: method defined here
+  --> src/matching/job.rs
+   |
+   |     pub const fn with_ratio(mut self, ratio: MatchRatio) -> Self {
+   |                  ^^^^^^^^^^

@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+  --> tests/ui/with_birth_window_requires_typed_days.rs:12:28
+   |
+12 |         .with_birth_window(30)
+   |          ----------------- ^^ expected `BirthDateWindowDays`, found integer
+   |          |
+   |          arguments to this method are incorrect
+   |
+note: method defined here
+  --> src/matching/job.rs
+   |
+   |     pub const fn with_birth_window(mut self, days: BirthDateWindowDays) -> Self {
+   |                  ^^^^^^^^^^^^^^^^^

@@ -1,0 +1,51 @@
+[package]
+name = "cohort_matching"
+version = "0.2.0"
+edition = "2024"
+authors = ["Tobias Kragholm"]
+license = "MIT OR Apache-2.0"
+description = "Caliper-based cohort matching with optional role switching for risk-set sampling"
+repository = "https://github.com/tkragholm/cohort_matching"
+readme = "README.md"
+keywords = ["matching", "epidemiology", "cohort", "statistics", "healthcare"]
+categories = ["algorithms", "science"]
+exclude = ["target/", ".DS_Store"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["test-utils"]
+reporting = []
+bench-internals = []
+test-utils = []
+
+[dependencies]
+rayon = "1.11.0"
+rand_chacha = "0.10.0"
+rapidhash = "4"
+rustc-hash = "2"
+bon = "3"
+ordered-float = "5"
+chrono = { version = "0.4.43", features = ["serde"] }
+faer = { version = "0.24.0", features = ["nightly", "perf-warn"] }
+itertools = "0.14"
+rand = "0.10.0"
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false }
+rstest = "0.26"
+proptest = "1.6.0"
+trybuild = "1.0.112"
+
+[[bench]]
+name = "distance_channels"
+harness = false
+required-features = ["test-utils"]
+
+[[bench]]
+name = "balance_stats"
+harness = false
+required-features = ["bench-internals", "test-utils"]
