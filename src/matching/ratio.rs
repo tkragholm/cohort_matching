@@ -24,9 +24,11 @@ impl RatioPolicy {
             return Self::from_primary(primary_ratio);
         }
 
-        let ratios = ratio_fallback
-            .iter()
-            .map(|ratio| ratio.get())
+        // The strict hierarchy is the primary ratio first, then each declared
+        // fallback. Omitting the primary makes the top tier (e.g. 1:4)
+        // unreachable when it is not also listed as a fallback.
+        let ratios = std::iter::once(primary_ratio)
+            .chain(ratio_fallback.iter().map(|ratio| ratio.get()))
             .sorted_by(|left, right| right.cmp(left))
             .unique()
             .collect_vec();
@@ -90,5 +92,23 @@ mod tests {
         );
         assert_eq!(policy.target_ratio(1), None);
         assert!(!policy.is_shortfall(1));
+    }
+
+    #[test]
+    fn primary_ratio_is_top_of_strict_hierarchy() {
+        // primary 4 with fallbacks 3, 2: 1:4 must be reachable, then 1:3, 1:2,
+        // and a single available control falls below the 1:2 floor.
+        let policy = RatioPolicy::from_fallback(
+            4,
+            &[
+                MatchRatio::new(3).expect("non-zero"),
+                MatchRatio::new(2).expect("non-zero"),
+            ],
+        );
+        assert_eq!(policy.target_ratio(5), Some(4));
+        assert_eq!(policy.target_ratio(4), Some(4));
+        assert_eq!(policy.target_ratio(3), Some(3));
+        assert_eq!(policy.target_ratio(2), Some(2));
+        assert_eq!(policy.target_ratio(1), None);
     }
 }
