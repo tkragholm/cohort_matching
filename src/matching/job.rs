@@ -668,4 +668,31 @@ mod tests {
         assert_eq!(result.matched_cases, 1);
         assert_eq!(result.pairs[0].control_id, "c2_resident");
     }
+
+    #[test]
+    fn resident_check_excludes_control_emigrating_on_the_index_date() {
+        use crate::types::RoleTransitionRecord;
+
+        let a1 = RoleTransitionRecord::from_record(
+            BaseRecord::new("a1", date(2010, 1, 1)),
+            Some(date(2012, 1, 1)),
+        );
+        // Emigration exactly on the case index date: residency is strict (> index),
+        // so this control is non-resident and the only candidate is dropped.
+        let c_boundary = RoleTransitionRecord::from_record(
+            BaseRecord::new("c_boundary", date(2010, 1, 1))
+                .with_emigration_date(date(2012, 1, 1)),
+            None,
+        );
+
+        let records = vec![a1, c_boundary];
+
+        let result = MatchJob::new_transition(&records, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_resident_check()
+            .run();
+
+        assert_eq!(result.matched_cases, 0);
+        assert!(result.pairs.is_empty());
+    }
 }
