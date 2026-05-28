@@ -15,6 +15,12 @@ pub trait MatchingRecord: Send + Sync {
     fn death_date(&self) -> Option<NaiveDate> {
         None
     }
+    /// Optional emigration date. If provided, used to derive residency at index
+    /// (see [`ResidentAtIndexRecord`]): a record is non-resident from this date
+    /// onward.
+    fn emigration_date(&self) -> Option<NaiveDate> {
+        None
+    }
 }
 
 pub trait RoleIndexedRecord: MatchingRecord {
@@ -50,6 +56,10 @@ impl MatchingRecord for BaseRecord {
     fn death_date(&self) -> Option<NaiveDate> {
         self.death_date
     }
+
+    fn emigration_date(&self) -> Option<NaiveDate> {
+        self.emigration_date
+    }
 }
 
 impl MatchingRecord for BalanceRecord {
@@ -71,6 +81,10 @@ impl MatchingRecord for BalanceRecord {
 
     fn death_date(&self) -> Option<NaiveDate> {
         self.core.death_date
+    }
+
+    fn emigration_date(&self) -> Option<NaiveDate> {
+        self.core.emigration_date
     }
 }
 
@@ -100,11 +114,26 @@ impl<R: MatchingRecord> MatchingRecord for RoleTransitionRecord<R> {
     fn death_date(&self) -> Option<NaiveDate> {
         self.record.death_date()
     }
+
+    fn emigration_date(&self) -> Option<NaiveDate> {
+        self.record.emigration_date()
+    }
 }
 
 impl<R: MatchingRecord> RoleIndexedRecord for RoleTransitionRecord<R> {
     fn event_date(&self) -> Option<NaiveDate> {
         self.transition_date
+    }
+}
+
+impl<R: MatchingRecord> ResidentAtIndexRecord for RoleTransitionRecord<R> {
+    /// Resident at `index_date` unless an emigration date on or before it is known.
+    ///
+    /// Mirrors [`MatchJob::with_alive_check`](crate::matching::MatchJob::with_alive_check)
+    /// semantics: a control with no emigration date is treated as resident, and
+    /// one that emigrated strictly after the case index date is still resident.
+    fn is_resident_at(&self, index_date: NaiveDate) -> bool {
+        self.emigration_date().map_or(true, |emigration| emigration > index_date)
     }
 }
 

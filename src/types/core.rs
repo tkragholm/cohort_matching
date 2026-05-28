@@ -140,6 +140,9 @@ pub struct BaseRecord {
     pub unique_key: Option<String>,
     /// Optional death date.
     pub death_date: Option<NaiveDate>,
+    /// Optional emigration date (used to derive residency at index).
+    #[serde(default)]
+    pub emigration_date: Option<NaiveDate>,
 }
 
 impl BaseRecord {
@@ -152,6 +155,7 @@ impl BaseRecord {
             strata: HashMap::new(),
             unique_key: None,
             death_date: None,
+            emigration_date: None,
         }
     }
 
@@ -159,6 +163,13 @@ impl BaseRecord {
     #[must_use]
     pub const fn with_death_date(mut self, date: NaiveDate) -> Self {
         self.death_date = Some(date);
+        self
+    }
+
+    /// Set an optional emigration date for the record.
+    #[must_use]
+    pub const fn with_emigration_date(mut self, date: NaiveDate) -> Self {
+        self.emigration_date = Some(date);
         self
     }
 }

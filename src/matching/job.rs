@@ -636,4 +636,36 @@ mod tests {
         assert_eq!(result.matched_cases, 1);
         assert_eq!(result.pairs[0].control_id, "c2_resident");
     }
+
+    #[test]
+    fn match_job_with_resident_check_uses_base_record_emigration_date() {
+        use crate::types::RoleTransitionRecord;
+
+        let a1 = RoleTransitionRecord::from_record(
+            BaseRecord::new("a1", date(2010, 1, 1)),
+            Some(date(2012, 1, 1)),
+        );
+        // Emigrated before the case index date -> non-resident at index.
+        let c1_emigrated = RoleTransitionRecord::from_record(
+            BaseRecord::new("c1_emigrated", date(2010, 1, 1))
+                .with_emigration_date(date(2011, 1, 1)),
+            None,
+        );
+        // Emigrated after the case index date -> still resident at index.
+        let c2_resident = RoleTransitionRecord::from_record(
+            BaseRecord::new("c2_resident", date(2010, 1, 1))
+                .with_emigration_date(date(2015, 1, 1)),
+            None,
+        );
+
+        let records = vec![a1, c1_emigrated, c2_resident];
+
+        let result = MatchJob::new_transition(&records, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_resident_check()
+            .run();
+
+        assert_eq!(result.matched_cases, 1);
+        assert_eq!(result.pairs[0].control_id, "c2_resident");
+    }
 }
