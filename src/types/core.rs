@@ -538,15 +538,7 @@ impl MatchingCriteria {
     ///
     /// Returns [`CriteriaValidationError`] when one or more criteria values are invalid.
     pub fn validate(&self) -> Result<ValidatedMatchingCriteria, CriteriaValidationError> {
-        if self.typed_birth_date_window().is_none() {
-            return Err(CriteriaValidationError::NegativeBirthDateWindow);
-        }
-        if self.match_ratio == 0 {
-            return Err(CriteriaValidationError::ZeroMatchRatio);
-        }
-        Ok(ValidatedMatchingCriteria {
-            inner: self.clone(),
-        })
+        self.clone().build()
     }
 
     /// Build and validate matching criteria.

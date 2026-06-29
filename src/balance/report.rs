@@ -427,21 +427,21 @@ fn matched_samples(
 ) -> (Vec<BalanceRecord>, Vec<BalanceRecord>) {
     let case_map = cases
         .iter()
-        .map(|case| (case.core.id.as_str(), case.clone()))
-        .collect::<HashMap<_, _>>();
+        .map(|case| (case.core.id.as_str(), case))
+        .collect::<HashMap<&str, &BalanceRecord>>();
     let control_map = controls
         .iter()
-        .map(|control| (control.core.id.as_str(), control.clone()))
-        .collect::<HashMap<_, _>>();
+        .map(|control| (control.core.id.as_str(), control))
+        .collect::<HashMap<&str, &BalanceRecord>>();
 
     let mut cases_out = Vec::new();
     let mut controls_out = Vec::new();
     for pair in &outcome.pairs {
         if let Some(case) = case_map.get(pair.case_id.as_str()) {
-            cases_out.push(case.clone());
+            cases_out.push((*case).clone());
         }
         if let Some(control) = control_map.get(pair.control_id.as_str()) {
-            controls_out.push(control.clone());
+            controls_out.push((*control).clone());
         }
     }
     (cases_out, controls_out)
