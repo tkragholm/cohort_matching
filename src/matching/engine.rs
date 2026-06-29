@@ -366,6 +366,15 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
             eligible.push(idx);
         }
 
+        // Determinism: the candidate pool's order is otherwise inherited from the
+        // upstream control array, whose order is NOT stable across processes (it is
+        // built through hash-backed collections, so std's per-process hash seed
+        // shuffles it). The seeded selector draws a *position* into this Vec, so a
+        // varying order -> different controls picked for the same seed. Sorting by
+        // the stable control IDENTITY (person id) makes the pool order reproducible
+        // regardless of the array order (and gives a stable tie-break for
+        // distance-based selection) without changing which candidates are eligible.
+        eligible.sort_unstable_by(|&a, &b| self.controls[a].id().cmp(self.controls[b].id()));
         eligible
     }
 
