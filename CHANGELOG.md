@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Strata group order is deterministic across processes.** `group_anchors_by_strata`
+  returned `HashMap::into_values()`, and `std`'s `RandomState` is seeded per process,
+  so the strata groups — and the order of the pairs collected from them — differed on
+  every run. The matched set was the same size with the same membership, in a
+  different row order. That is enough to change results for any caller that resamples
+  in row order: measured on a downstream epidemiological pipeline, two identical runs
+  reported a different point estimate on 38 of 40 analysis slices, because its
+  clustered bootstrap draws in the order rows arrive. Groups now come back in
+  first-appearance order, which makes the output order a function of the input order
+  and therefore something the caller can control.
+
 ### Changed
 - Added `itertools` to simplify collection, sorting, and deduplication logic in matching and role-transition helpers.
 - Refactored balance statistics internals into a documented `stats` module with explicit formula references for SMD and Cramer's V.
