@@ -152,32 +152,6 @@ impl NumericFeature {
     }
 }
 
-fn covariate_kind(
-    cases: &[BalanceRecord],
-    controls: &[BalanceRecord],
-    case_supplemental: &SupplementalCovariateMap,
-    control_supplemental: &SupplementalCovariateMap,
-    key: &str,
-) -> CovariateKind {
-    for record in cases {
-        if let Some(value) = covariate_value(record, key, case_supplemental) {
-            return match value {
-                CovariateValue::Numeric(_) => CovariateKind::Numeric,
-                _ => CovariateKind::Categorical,
-            };
-        }
-    }
-    for record in controls {
-        if let Some(value) = covariate_value(record, key, control_supplemental) {
-            return match value {
-                CovariateValue::Numeric(_) => CovariateKind::Numeric,
-                _ => CovariateKind::Categorical,
-            };
-        }
-    }
-    CovariateKind::Categorical
-}
-
 fn collect_covariate_keys(
     cases: &[BalanceRecord],
     controls: &[BalanceRecord],
@@ -213,18 +187,48 @@ fn split_covariate_keys_by_kind(
     case_supplemental: &SupplementalCovariateMap,
     control_supplemental: &SupplementalCovariateMap,
 ) -> (Vec<String>, Vec<String>) {
+    // One sweep of the records rather than one per key. `covariate_kind`
+    // returns on the first record carrying the key, so this was cheap for a
+    // key the first record has and a full two-list scan for one that only
+    // appears late -- or, for a supplemental key no BalanceRecord carries at
+    // all, every time.
+    //
+    // First-wins in the same order preserves the answer exactly: cases before
+    // controls, and within each the record order, which is what the per-key
+    // search did.
+    let mut kinds: HashMap<&str, CovariateKind> = HashMap::new();
+    for (records, supplemental) in [(cases, case_supplemental), (controls, control_supplemental)] {
+        for record in records {
+            // The record's own covariates, then whatever the supplemental map
+            // adds for this id -- the two places `covariate_value` looks, in
+            // the order it looks in them.
+            let supplemental_for_record = supplemental.get(record.core.id.as_str());
+            let keys = record.covariates.iter().chain(
+                supplemental_for_record
+                    .into_iter()
+                    .flat_map(|values| values.iter()),
+            );
+            for (key, value) in keys {
+                kinds.entry(key.as_str()).or_insert(match value {
+                    CovariateValue::Numeric(_) => CovariateKind::Numeric,
+                    _ => CovariateKind::Categorical,
+                });
+            }
+        }
+    }
+
     collect_covariate_keys(cases, controls, case_supplemental, control_supplemental)
         .into_iter()
         .fold(
             (Vec::new(), Vec::new()),
             |(mut numeric, mut categorical), key| {
-                match covariate_kind(
-                    cases,
-                    controls,
-                    case_supplemental,
-                    control_supplemental,
-                    &key,
-                ) {
+                // Absent from every record: `covariate_kind` fell through both
+                // loops to Categorical, so this does too.
+                match kinds
+                    .get(key.as_str())
+                    .copied()
+                    .unwrap_or(CovariateKind::Categorical)
+                {
                     CovariateKind::Numeric => numeric.push(key),
                     CovariateKind::Categorical => categorical.push(key),
                 }
@@ -778,16 +782,18 @@ mod tests {
             &HashMap::new(),
         );
         assert_eq!(keys, vec!["age".to_string(), "region".to_string()]);
-        assert!(matches!(
-            covariate_kind(
-                &[case_a.clone()],
-                &[control_a.clone()],
-                &HashMap::new(),
-                &HashMap::new(),
-                "age",
-            ),
-            CovariateKind::Numeric
-        ));
+        // Through the splitter rather than the per-key classifier it replaced:
+        // same question, and it also pins which side each key lands on.
+        // `age` is Numeric even though the case's value is NaN, and `region`
+        // is Categorical because Missing is not Numeric.
+        let (numeric, categorical) = split_covariate_keys_by_kind(
+            &[case_a.clone()],
+            &[control_a.clone()],
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        assert_eq!(numeric, vec!["age".to_string()]);
+        assert_eq!(categorical, vec!["region".to_string()]);
         let raw_age = NumericFeature::Raw {
             key: "age".to_string(),
         };

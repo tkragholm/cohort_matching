@@ -870,7 +870,12 @@ pub fn to_f64(n: usize) -> f64 {
 }
 
 fn usize_to_f64(n: usize) -> f64 {
-    f64::from(u32::try_from(n).unwrap_or(u32::MAX))
+    // Was `f64::from(u32::try_from(n).unwrap_or(u32::MAX))`, which SATURATES:
+    // every cohort above 4,294,967,295 counted as exactly that many. No real
+    // cohort reaches it, but a count that silently stops rising is the wrong
+    // failure for a diagnostic to have. `as f64` is exact to 2^53 and agrees
+    // with the old form everywhere below the saturation point.
+    n as f64
 }
 
 pub fn invalid_criteria_outcome(

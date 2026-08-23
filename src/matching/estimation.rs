@@ -801,16 +801,13 @@ fn fit_logistic_regression(
 
     for iter_idx in 0..config.max_iter {
         iterations = iter_idx + 1;
-        for row_idx in 0..matrix.n_rows {
-            let row = matrix.row(row_idx);
-            let linear = row
-                .iter()
-                .zip(coefficients.iter())
-                .map(|(x, beta)| x * beta)
-                .sum::<f64>();
-            linear_predictor[row_idx] = linear;
-            probabilities[row_idx] = sigmoid_clipped(linear, config.probability_clip);
-        }
+        refresh_predictions(
+            matrix,
+            &coefficients,
+            config.probability_clip,
+            &mut linear_predictor,
+            &mut probabilities,
+        );
 
         let mut normal_matrix = vec![0.0_f64; matrix.n_cols.saturating_mul(matrix.n_cols)];
         let mut weighted_target = vec![0.0_f64; matrix.n_cols];
@@ -860,16 +857,13 @@ fn fit_logistic_regression(
         }
     }
 
-    for row_idx in 0..matrix.n_rows {
-        let row = matrix.row(row_idx);
-        let linear = row
-            .iter()
-            .zip(coefficients.iter())
-            .map(|(x, beta)| x * beta)
-            .sum::<f64>();
-        linear_predictor[row_idx] = linear;
-        probabilities[row_idx] = sigmoid_clipped(linear, config.probability_clip);
-    }
+    refresh_predictions(
+        matrix,
+        &coefficients,
+        config.probability_clip,
+        &mut linear_predictor,
+        &mut probabilities,
+    );
 
     Ok(LogisticFit {
         coefficients,
@@ -918,16 +912,13 @@ fn fit_elastic_net_logistic(
 
     for iter_idx in 0..config.max_iter {
         iterations = iter_idx + 1;
-        for row_idx in 0..matrix.n_rows {
-            let row = matrix.row(row_idx);
-            let linear = row
-                .iter()
-                .zip(coefficients.iter())
-                .map(|(x, beta)| x * beta)
-                .sum::<f64>();
-            linear_predictor[row_idx] = linear;
-            probabilities[row_idx] = sigmoid_clipped(linear, config.probability_clip);
-        }
+        refresh_predictions(
+            matrix,
+            &coefficients,
+            config.probability_clip,
+            &mut linear_predictor,
+            &mut probabilities,
+        );
 
         let mut gradients = vec![0.0_f64; matrix.n_cols];
         for row_idx in 0..matrix.n_rows {
@@ -961,16 +952,13 @@ fn fit_elastic_net_logistic(
         }
     }
 
-    for row_idx in 0..matrix.n_rows {
-        let row = matrix.row(row_idx);
-        let linear = row
-            .iter()
-            .zip(coefficients.iter())
-            .map(|(x, beta)| x * beta)
-            .sum::<f64>();
-        linear_predictor[row_idx] = linear;
-        probabilities[row_idx] = sigmoid_clipped(linear, config.probability_clip);
-    }
+    refresh_predictions(
+        matrix,
+        &coefficients,
+        config.probability_clip,
+        &mut linear_predictor,
+        &mut probabilities,
+    );
 
     Ok(LogisticFit {
         coefficients,
@@ -1312,15 +1300,37 @@ fn invert_matrix(matrix: &[f64], dimension: usize) -> Option<Vec<f64>> {
     Some(inverse)
 }
 
+/// Recompute the linear predictor and the clipped probabilities in place.
+///
+/// The same nine lines appeared four times: twice inside an IRLS loop and
+/// twice after one, to leave the caller holding predictions that match the
+/// coefficients it is about to return. Four copies of a numeric kernel is four
+/// places for a clip or a dot product to drift apart.
+fn refresh_predictions(
+    matrix: &CovariateMatrix,
+    coefficients: &[f64],
+    probability_clip: f64,
+    linear_predictor: &mut [f64],
+    probabilities: &mut [f64],
+) {
+    for row_idx in 0..matrix.n_rows {
+        let linear = matrix
+            .row(row_idx)
+            .iter()
+            .zip(coefficients.iter())
+            .map(|(x, beta)| x * beta)
+            .sum::<f64>();
+        linear_predictor[row_idx] = linear;
+        probabilities[row_idx] = sigmoid_clipped(linear, probability_clip);
+    }
+}
+
 fn to_dimension(length: usize) -> Option<usize> {
-    if length == 0 {
-        return Some(0);
-    }
-    let mut root = 1usize;
-    while root.saturating_mul(root) < length {
-        root += 1;
-    }
-    (root.saturating_mul(root) == length).then_some(root)
+    // The side of the square this flattened matrix is, or None if it is not
+    // square. Was a linear search upward for the root; `isqrt` is the same
+    // answer, including for 0.
+    let root = length.isqrt();
+    (root * root == length).then_some(root)
 }
 
 use super::to_f64;
