@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matcher exposes was spent on the child, so the parental rule was measured
   after matching and never imposed during it.
 
+## [0.2.0] - 2026-08-26
+
 ### Fixed
 - **Strata group order is deterministic across processes.** `group_anchors_by_strata`
   returned `HashMap::into_values()`, and `std`'s `RandomState` is seeded per process,
@@ -56,9 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `to_dimension` uses `isqrt` instead of searching upward for an integer square
   root.
 
-## [0.2.0] - 2026-04-17
-
-### Changed
 - Added `itertools` to simplify collection, sorting, and deduplication logic in matching and role-transition helpers.
 - Refactored balance statistics internals into a documented `stats` module with explicit formula references for SMD and Cramer's V.
 - Corrected Cramer's V scaling to use `min(r - 1, c - 1)` for 2xK tables.
