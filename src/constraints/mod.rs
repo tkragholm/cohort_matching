@@ -58,10 +58,42 @@ impl<R: MatchingRecord> Constraint<R> for GenderMatch {
 /// Constraint that ensures a numeric field is within a certain caliper window.
 ///
 /// This is a generic version of [`DateWindow`] that works on any numeric value.
+/// What a caliper does when a record does not carry the value.
+///
+/// There is no universally right answer, which is why it is a choice rather
+/// than a default buried in the comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MissingPolicy {
+    /// Refuse the pair. An unverifiable constraint has not been satisfied.
+    ///
+    /// The safe reading, and the default: a caliper is a claim about how close
+    /// two records are, and a value nobody recorded supports no such claim.
+    #[default]
+    Refuse,
+    /// Two records both missing the value satisfy the caliper; one missing and
+    /// one present does not.
+    ///
+    /// For a matched-cohort design this is often the honest reading rather than
+    /// the lax one, because MISSINGNESS IS ITSELF A STRATUM. A study that
+    /// exact-matches on a categorical covariate routinely gives "unknown" its
+    /// own level, so that a record the register does not cover matches another
+    /// the register does not cover -- stricter than dropping the constraint,
+    /// and more honest than imputing a value. This is that convention for a
+    /// numeric field. Two children with no recorded father are alike in that
+    /// respect; pairing one of them with a child whose father IS recorded is
+    /// the comparison the caliper was meant to prevent, and it still is.
+    ///
+    /// It does not make missingness free: a record missing the value can only
+    /// match another missing it, so the constraint still binds, and it binds on
+    /// a smaller pool.
+    MatchMissing,
+}
+
 pub struct Caliper<R, F> {
     selector: F,
     window: f64,
     reason: &'static str,
+    missing: MissingPolicy,
     _marker: std::marker::PhantomData<R>,
 }
 
@@ -75,8 +107,16 @@ where
             selector,
             window,
             reason: "caliper_mismatch",
+            missing: MissingPolicy::Refuse,
             _marker: std::marker::PhantomData,
         }
+    }
+
+    /// Choose what happens when a record does not carry the value.
+    #[must_use]
+    pub const fn on_missing(mut self, policy: MissingPolicy) -> Self {
+        self.missing = policy;
+        self
     }
 
     crate::impl_with_reason!();
@@ -91,7 +131,8 @@ where
 ///
 /// The field is read through [`MatchingRecord::numeric`], and a record that does
 /// not carry it refuses the pair — an unverifiable constraint has not been
-/// satisfied.
+/// satisfied. [`Caliper::on_missing`] changes that when a study's convention is
+/// that unknown matches unknown.
 ///
 /// The returned caliper owns its field name, so `use<R>` states that the opaque
 /// type captures only `R`. Without it, edition 2024 captures every lifetime in
@@ -121,6 +162,10 @@ where
         let control_val = (self.selector)(control);
         match (case_val, control_val) {
             (Some(c), Some(ctrl)) => (c - ctrl).abs() <= self.window,
+            // Both missing: alike in the one respect the caliper can see, if the
+            // caller has said so. One missing and one present is refused either
+            // way -- that is the comparison a caliper exists to prevent.
+            (None, None) => self.missing == MissingPolicy::MatchMissing,
             _ => false,
         }
     }
@@ -662,6 +707,102 @@ mod named_caliper_tests {
             &wrap("a", 1980.0),
             &wrap("b", 1982.0),
             1.0
+        ));
+    }
+
+    #[test]
+    fn a_missing_value_refuses_by_default() {
+        // The safe reading: a caliper is a claim about how close two records
+        // are, and a value nobody recorded supports no such claim.
+        assert!(!allows(&record("a", None), &record("b", Some(1980.0)), 1.0));
+        assert!(!allows(&record("a", Some(1980.0)), &record("b", None), 1.0));
+        assert!(!allows(&record("a", None), &record("b", None), 1.0));
+    }
+
+    /// As `allows_field`, with a missing-value policy.
+    fn allows_with_policy<R: MatchingRecord>(
+        field: &str,
+        case: &R,
+        control: &R,
+        window: f64,
+        policy: MissingPolicy,
+    ) -> bool {
+        use crate::matching::UsedControlsVec;
+        use crate::types::{ControlIdx, MatchingCriteria, UniqueValueId};
+        use rapidhash::RapidHashMap;
+        use rustc_hash::FxHashSet;
+
+        let criteria = MatchingCriteria::default();
+        let used_controls = UsedControlsVec::with_capacity(0);
+        let used_unique: FxHashSet<UniqueValueId> = FxHashSet::default();
+        let interner: RapidHashMap<String, UniqueValueId> = RapidHashMap::default();
+        let ctx = ConstraintContext {
+            criteria: &criteria,
+            used_controls: &used_controls,
+            used_unique: &used_unique,
+            unique_interner: &interner,
+            control_idx: ControlIdx::new(0),
+            case_strata_values: None,
+            control_strata_values: None,
+        };
+        caliper_on_field::<R>(field, window)
+            .on_missing(policy)
+            .allows(case, control, &ctx)
+    }
+
+    #[test]
+    fn two_missing_values_match_when_the_caller_says_so() {
+        // Missingness as its own stratum, which is what a study already does
+        // when it exact-matches on a categorical covariate with an "unknown"
+        // level. Two children with no recorded father are alike in that respect.
+        assert!(allows_with_policy(
+            "parent_birth_year",
+            &record("a", None),
+            &record("b", None),
+            1.0,
+            MissingPolicy::MatchMissing,
+        ));
+    }
+
+    #[test]
+    fn one_missing_and_one_present_is_refused_under_either_policy() {
+        // The comparison a caliper exists to prevent, and neither policy allows
+        // it: "unknown matches unknown" is not "unknown matches anything".
+        for policy in [MissingPolicy::Refuse, MissingPolicy::MatchMissing] {
+            assert!(!allows_with_policy(
+                "parent_birth_year",
+                &record("a", None),
+                &record("b", Some(1980.0)),
+                1.0,
+                policy,
+            ));
+            assert!(!allows_with_policy(
+                "parent_birth_year",
+                &record("a", Some(1980.0)),
+                &record("b", None),
+                1.0,
+                policy,
+            ));
+        }
+    }
+
+    #[test]
+    fn the_window_still_binds_when_both_values_are_present() {
+        // The policy governs missing values and nothing else: a permissive
+        // policy must not loosen the caliper for records that have the value.
+        assert!(!allows_with_policy(
+            "parent_birth_year",
+            &record("a", Some(1980.0)),
+            &record("b", Some(1996.0)),
+            1.0,
+            MissingPolicy::MatchMissing,
+        ));
+        assert!(allows_with_policy(
+            "parent_birth_year",
+            &record("a", Some(1980.0)),
+            &record("b", Some(1981.0)),
+            1.0,
+            MissingPolicy::MatchMissing,
         ));
     }
 }

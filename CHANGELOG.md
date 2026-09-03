@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-04
+
+### Added
+- **A caliper can be told what a missing value means.** `Caliper::on_missing`
+  takes a `MissingPolicy`: `Refuse`, which is the default and what every caliper
+  did before, or `MatchMissing`, under which two records both lacking the value
+  satisfy the constraint. One missing and one present is refused either way --
+  "unknown matches unknown" is not "unknown matches anything", and the pair a
+  caliper exists to prevent is still prevented.
+
+  The behaviour was never absent, only unstated: it lived in a `_ => false` arm.
+  What is new is that it is a choice, with the conservative branch as the
+  default, so a caller that says nothing keeps exactly the old semantics.
+
+  `MatchMissing` is often the honest reading rather than the lax one, because
+  MISSINGNESS IS ITSELF A STRATUM. A study that exact-matches on a categorical
+  covariate routinely gives "unknown" its own level, so a record the register
+  does not cover matches another the register does not cover -- stricter than
+  dropping the constraint, more honest than imputing a value. This is that
+  convention for a numeric field. It does not make missingness free: such a
+  record can still only match another missing the same value, so the constraint
+  binds, on a smaller pool.
+
+  The case: a cohort whose parental birth years are unrecorded for 1.1% of
+  mothers and 3.7% of fathers. Under `Refuse` those children match nobody and
+  leave the study, which is a selection effect on top of the constraint itself.
+
 ## [0.4.0] - 2026-09-03
 
 ### Added

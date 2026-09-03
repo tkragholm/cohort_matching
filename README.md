@@ -18,7 +18,7 @@ Caliper-based cohort matching for observational studies.
 
 ```toml
 [dependencies]
-cohort_matching = { version = "0.4.0", features = ["reporting"] }
+cohort_matching = { version = "0.5.0", features = ["reporting"] }
 ```
 
 ## Quick Start: Standard Matching

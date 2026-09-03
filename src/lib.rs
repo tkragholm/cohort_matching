@@ -204,7 +204,8 @@ pub mod prelude {
 
     pub mod constraints {
         pub use crate::constraints::{
-            Caliper, DateWindow, GenderMatch, MustBeAlive, MustBeResident, caliper_on_field,
+            Caliper, DateWindow, GenderMatch, MissingPolicy, MustBeAlive, MustBeResident,
+            caliper_on_field,
         };
     }
 }
