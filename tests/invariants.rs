@@ -207,3 +207,74 @@ fn criteria_builder_validates() {
         .expect("valid criteria from builder");
     assert_eq!(validated.as_ref().match_ratio, 1);
 }
+
+/// The low-level request types accept an owned, heterogeneous constraint list.
+///
+/// Two compile-fail cases used to assert the opposite, on the design stance
+/// that the constraint group is statically dispatched. The crate has always
+/// accepted `[&dyn Constraint<R>]`, though, so dynamic dispatch was never
+/// actually excluded -- what `Box` adds is OWNERSHIP. Without it a caller
+/// cannot build its constraints in a helper and return them, which is exactly
+/// the shape a caller has when its matching rules come from configuration
+/// rather than from code. Both entry points are pinned because the two
+/// compile-fail cases covered both.
+#[test]
+fn requests_accept_an_owned_list_of_boxed_constraints() {
+    use cohort_matching::Constraint;
+    use cohort_matching::constraints::caliper_on_field;
+
+    fn rules_from_config<R: MatchingRecord + 'static>(
+        config: &[(&str, f64)],
+    ) -> Vec<Box<dyn Constraint<R>>> {
+        config
+            .iter()
+            .map(|&(field, window)| {
+                Box::new(caliper_on_field::<R>(field, window)) as Box<dyn Constraint<R>>
+            })
+            .collect()
+    }
+
+    let config = [("mother_birth_year", 1.0), ("father_birth_year", 1.0)];
+
+    // Standard.
+    let anchors = vec![
+        BaseRecord::new("a", date(2010, 1, 1))
+            .with_numeric("mother_birth_year", 1980.0)
+            .with_numeric("father_birth_year", 1978.0),
+    ];
+    let candidates = vec![
+        BaseRecord::new("far", date(2010, 1, 1))
+            .with_numeric("mother_birth_year", 1996.0)
+            .with_numeric("father_birth_year", 1978.0),
+        BaseRecord::new("near", date(2010, 1, 1))
+            .with_numeric("mother_birth_year", 1981.0)
+            .with_numeric("father_birth_year", 1978.0),
+    ];
+    let criteria = MatchingCriteria::builder()
+        .birth_date_window_days(365)
+        .match_ratio(1)
+        .build();
+    let constraints = rules_from_config::<BaseRecord>(&config);
+    let outcome = match_standard(
+        &anchors,
+        &candidates,
+        StandardMatchRequest::new(&criteria, DeterministicSelection, &constraints),
+    );
+    assert_eq!(outcome.pairs.len(), 1);
+    assert_eq!(outcome.pairs[0].control_id, "near");
+
+    // Role transition.
+    let records = vec![
+        RoleTransitionRecord::from_record(anchors[0].clone(), Some(date(2014, 1, 1))),
+        RoleTransitionRecord::from_record(candidates[0].clone(), None),
+        RoleTransitionRecord::from_record(candidates[1].clone(), None),
+    ];
+    let options = RoleTransitionOptions::default();
+    let constraints = rules_from_config::<RoleTransitionRecord<BaseRecord>>(&config);
+    let outcome = match_transition(
+        &records,
+        TransitionMatchRequest::new(&criteria, &options, DeterministicSelection, &constraints),
+    );
+    assert_eq!(outcome.pairs.len(), 1);
+    assert_eq!(outcome.pairs[0].control_id, "near");
+}

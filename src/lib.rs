@@ -119,25 +119,25 @@ pub use balance::{
     build_projected_balance_rows, categorical_max_abs_diff, smd_numeric_from_values, variance,
 };
 pub use matching::{
-    CaliperConstraint, Constraint, ConstraintContext, ConstraintGroup, CovariateEncodingConfig,
-    CovariateMatrix, CovariateRecord, DateDistance, DeterministicSelection, DistanceChannel,
-    DistanceConfig, DistanceMetric, ElasticNetLogisticConfig, EstimationError,
-    ExactMatchConstraint, IdMapMahalanobisDistance, IdMapPropensityScoreDistance,
-    LogisticRegressionConfig, MahalanobisCovarianceStrategy, MahalanobisDistance,
-    MahalanobisDistancePreparation, MahalanobisError, MahalanobisPreparationConfig,
-    MahalanobisTransform, MatchJob, MatchWeightMethod, MatchingRecord, MissingValuePolicy,
-    NearestBirthDateSelection, PairWeight, PairWeightRow, PairWeightSet, PairWeightTable,
-    PropensityDistancePreparation, PropensityEstimator, PropensityMatchedOutcome,
-    PropensityScoreConfig, PropensityScoreDistance, PropensityScoreEstimate,
-    PropensityScoreOutputScale, RandomSelection, ReconstructedEpisode, ReconstructedMatchedPair,
-    ReconstructedMatchingOptions, ReconstructedMatchingOutput, ReconstructedMatchingTier,
-    ResidentAtIndexRecord, RoleIndexedRecord, SelectionStrategy, StandardMatchRequest,
-    StrataExactConstraint, SubclassReferenceGroup, SubclassSummary, SubclassificationConfig,
-    SubclassificationOutcome, UnitRole, UnitWeightRow, UnitWeightSet, UnitWeightTable,
-    UsedControlsVec, effective_sample_size, estimate_propensity_and_match, match_standard,
-    match_weights_from_pairs, pair_weights_from_pairs, prepare_mahalanobis_distance_config,
-    prepare_propensity_distance_config, reconstruct_case_control_pairs,
-    subclassify_by_propensity_score_map,
+    CaliperConstraint, Chained, Constraint, ConstraintContext, ConstraintGroup,
+    CovariateEncodingConfig, CovariateMatrix, CovariateRecord, DateDistance,
+    DeterministicSelection, DistanceChannel, DistanceConfig, DistanceMetric,
+    ElasticNetLogisticConfig, EstimationError, ExactMatchConstraint, IdMapMahalanobisDistance,
+    IdMapPropensityScoreDistance, LogisticRegressionConfig, MahalanobisCovarianceStrategy,
+    MahalanobisDistance, MahalanobisDistancePreparation, MahalanobisError,
+    MahalanobisPreparationConfig, MahalanobisTransform, MatchJob, MatchWeightMethod,
+    MatchingRecord, MissingValuePolicy, NearestBirthDateSelection, PairWeight, PairWeightRow,
+    PairWeightSet, PairWeightTable, PropensityDistancePreparation, PropensityEstimator,
+    PropensityMatchedOutcome, PropensityScoreConfig, PropensityScoreDistance,
+    PropensityScoreEstimate, PropensityScoreOutputScale, RandomSelection, ReconstructedEpisode,
+    ReconstructedMatchedPair, ReconstructedMatchingOptions, ReconstructedMatchingOutput,
+    ReconstructedMatchingTier, ResidentAtIndexRecord, RoleIndexedRecord, SelectionStrategy,
+    StandardMatchRequest, StrataExactConstraint, SubclassReferenceGroup, SubclassSummary,
+    SubclassificationConfig, SubclassificationOutcome, UnitRole, UnitWeightRow, UnitWeightSet,
+    UnitWeightTable, UsedControlsVec, effective_sample_size, estimate_propensity_and_match,
+    match_standard, match_weights_from_pairs, pair_weights_from_pairs,
+    prepare_mahalanobis_distance_config, prepare_propensity_distance_config,
+    reconstruct_case_control_pairs, subclassify_by_propensity_score_map,
 };
 pub use role_transition::{
     DefaultRiskSetPolicy, RiskSetPolicy, TransitionMatchRequest, match_transition,
@@ -172,7 +172,7 @@ pub mod prelude {
         AgeLimitYears, AnchorRecord, BalanceDiagnostics, BalanceRecord, BalanceRecordBuilder,
         BalanceReport, BalanceReportOptions, BalanceThresholdSummary, BalanceThresholds,
         BaseRecord, BirthDateWindowDays, CaliperConstraint, CandidateRecord, CategoricalBalance,
-        CategoricalCovariateSpec, CategoricalLevelBalance, CommonSupport,
+        CategoricalCovariateSpec, CategoricalLevelBalance, Chained, CommonSupport,
         CommonSupportFailureReason, Constraint, ConstraintContext, ConstraintGroup,
         ConstraintReason, ControlIdx, CovariateEncodingConfig, CovariateMatrix, CovariateRecord,
         CovariateValue, CriteriaValidationError, DateDistance, DefaultRiskSetPolicy,
@@ -204,7 +204,7 @@ pub mod prelude {
 
     pub mod constraints {
         pub use crate::constraints::{
-            Caliper, DateWindow, GenderMatch, MustBeAlive, MustBeResident,
+            Caliper, DateWindow, GenderMatch, MustBeAlive, MustBeResident, caliper_on_field,
         };
     }
 }

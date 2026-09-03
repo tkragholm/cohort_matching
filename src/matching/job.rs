@@ -1,6 +1,6 @@
 use crate::matching::engine::{StandardMatchRequest, match_standard};
 use crate::matching::{
-    Constraint, ConstraintGroup, DistanceConfig, MatchingRecord, RandomSelection,
+    Chained, Constraint, ConstraintGroup, DistanceConfig, MatchingRecord, RandomSelection,
     ResidentAtIndexRecord, RoleIndexedRecord, SelectionStrategy,
 };
 use crate::role_transition::{
@@ -196,6 +196,64 @@ where
             risk_set_policy: self.risk_set_policy,
             record: PhantomData,
         }
+    }
+
+    /// Append a whole constraint group, checked after everything already added.
+    ///
+    /// [`Self::with_constraint`] composes into a tuple, so the number of
+    /// constraints is fixed at compile time. This takes a
+    /// [`ConstraintGroup`], which `Vec<C>` implements, so a caller can decide
+    /// at run time how many constraints there are -- one per field named in a
+    /// configuration file, say. See [`Self::with_constraints`] for the common
+    /// case.
+    #[must_use]
+    pub fn with_constraint_group<G2>(self, group: G2) -> MatchJob<Mode, R, S, Chained<G, G2>, P>
+    where
+        G2: ConstraintGroup<R>,
+    {
+        MatchJob::<Mode, R, S, Chained<G, G2>, P> {
+            mode: self.mode,
+            criteria: self.criteria,
+            strategy: self.strategy,
+            constraints: Chained {
+                first: self.constraints,
+                second: group,
+            },
+            risk_set_policy: self.risk_set_policy,
+            record: PhantomData,
+        }
+    }
+
+    /// Append however many constraints of one type the caller has.
+    ///
+    /// The case this exists for: a study whose matching rules are configuration
+    /// rather than code, holding a list of `(field, window)` pairs.
+    /// [`crate::constraints::caliper_on_field`] returns the same type for every
+    /// field, so the calipers collect into one `Vec` and arrive here.
+    ///
+    /// An empty list adds nothing and refuses nothing.
+    ///
+    /// ```rust,ignore
+    /// let calipers: Vec<_> = cfg
+    ///     .calipers
+    ///     .iter()
+    ///     .map(|(field, window)| caliper_on_field(field, *window))
+    ///     .collect();
+    ///
+    /// let outcome = MatchJob::new_transition(&cohort, seed)
+    ///     .with_exact_matches(["sex", "municipality"])
+    ///     .with_constraints(calipers)
+    ///     .run();
+    /// ```
+    #[must_use]
+    pub fn with_constraints<C>(
+        self,
+        constraints: Vec<C>,
+    ) -> MatchJob<Mode, R, S, Chained<G, Vec<C>>, P>
+    where
+        C: Constraint<R>,
+    {
+        self.with_constraint_group(constraints)
     }
 
     /// Add a matching constraint.
@@ -691,5 +749,197 @@ mod tests {
 
         assert_eq!(result.matched_cases, 0);
         assert!(result.pairs.is_empty());
+    }
+
+    /// The record the parental-caliper case needs: a child matched on its own
+    /// birth date, carrying its parents' birth years as named numerics.
+    fn child(
+        id: &str,
+        transition: Option<chrono::NaiveDate>,
+        mother: f64,
+        father: f64,
+    ) -> crate::types::RoleTransitionRecord<BaseRecord> {
+        crate::types::RoleTransitionRecord::from_record(
+            BaseRecord::new(id, date(2010, 1, 1))
+                .with_numeric("mother_birth_year", mother)
+                .with_numeric("father_birth_year", father),
+            transition,
+        )
+    }
+
+    #[test]
+    fn with_constraints_binds_a_named_caliper_during_matching() {
+        use crate::constraints::caliper_on_field;
+
+        // The rule: comparators whose parents were born within one year. The
+        // far control is the one the first production run kept -- the parental
+        // window was measured after matching and never imposed during it.
+        let records = vec![
+            child("case", Some(date(2012, 1, 1)), 1980.0, 1978.0),
+            child("far", None, 1996.0, 1978.0),
+            child("near", None, 1981.0, 1978.0),
+        ];
+
+        let result = MatchJob::new_transition(&records, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_constraints(vec![caliper_on_field("mother_birth_year", 1.0)])
+            .run();
+
+        assert_eq!(result.matched_cases, 1);
+        assert_eq!(result.pairs[0].control_id, "near");
+    }
+
+    #[test]
+    fn with_constraints_applies_every_caliper_in_the_list() {
+        use crate::constraints::caliper_on_field;
+        use crate::types::RoleTransitionRecord;
+
+        // Two calipers, and the control that satisfies only the first must be
+        // refused. This is the whole point of taking a list: a caller with two
+        // numeric rules had to bake the second into its record type.
+        let rules = || {
+            vec![
+                caliper_on_field::<RoleTransitionRecord<BaseRecord>>("mother_birth_year", 1.0),
+                caliper_on_field("father_birth_year", 1.0),
+            ]
+        };
+
+        // Asserted on a pool where the only candidate fails the SECOND caliper,
+        // so the case can only stay unmatched. With a second, admissible control
+        // in the pool the selection could pick it for reasons of its own and
+        // the assertion would hold whether or not the caliper bound.
+        let refused = vec![
+            child("case", Some(date(2012, 1, 1)), 1980.0, 1978.0),
+            child("mother_only", None, 1980.0, 1990.0),
+        ];
+        let result = MatchJob::new_transition(&refused, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_constraints(rules())
+            .run();
+        assert_eq!(result.matched_cases, 0);
+        assert!(result.pairs.is_empty());
+
+        // And a control satisfying both is taken, so the refusal above is the
+        // caliper and not something else about the pool.
+        let admitted = vec![
+            child("case", Some(date(2012, 1, 1)), 1980.0, 1978.0),
+            child("mother_only", None, 1980.0, 1990.0),
+            child("both", None, 1980.0, 1978.0),
+        ];
+        let result = MatchJob::new_transition(&admitted, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_constraints(rules())
+            .run();
+        assert_eq!(result.matched_cases, 1);
+        assert_eq!(result.pairs[0].control_id, "both");
+    }
+
+    #[test]
+    fn with_constraints_on_an_empty_list_refuses_nothing() {
+        use crate::constraints::caliper_on_field;
+        use crate::types::RoleTransitionRecord;
+
+        // A configuration that names no calipers must not quietly become a
+        // configuration that refuses every pair.
+        let records = vec![
+            child("case", Some(date(2012, 1, 1)), 1980.0, 1978.0),
+            child("far", None, 1996.0, 1990.0),
+        ];
+
+        // Written the way a caller with an empty config list gets there: the
+        // closure type is opaque, so `Vec<Caliper<_, _>>` cannot be spelled and
+        // the type comes from the `map` instead.
+        let configured: Vec<(String, f64)> = Vec::new();
+        let empty: Vec<_> = configured
+            .into_iter()
+            .map(|(field, window)| {
+                caliper_on_field::<RoleTransitionRecord<BaseRecord>>(&field, window)
+            })
+            .collect();
+
+        let result = MatchJob::new_transition(&records, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_constraints(empty)
+            .run();
+
+        assert_eq!(result.matched_cases, 1);
+        assert_eq!(result.pairs[0].control_id, "far");
+    }
+
+    #[test]
+    fn with_constraints_keeps_the_constraints_added_before_it() {
+        use crate::constraints::caliper_on_field;
+        use crate::types::RoleTransitionRecord;
+
+        // `Chained` asks the statically composed group first and only then the
+        // list. Both must still bind: a control that satisfies the list and
+        // fails the earlier constraint has to be refused.
+        //
+        // The constraint added first is a real `Constraint` on purpose.
+        // `with_exact_match` sets strata criteria and is applied by the
+        // candidate index, not by the constraint group, so composing after it
+        // proves nothing about `Chained`.
+        let records = vec![
+            child("case", Some(date(2012, 1, 1)), 1980.0, 1978.0),
+            child("fails_the_earlier_one", None, 1980.0, 1990.0),
+            child("passes_both", None, 1980.0, 1978.0),
+        ];
+
+        let result = MatchJob::new_transition(&records, 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_constraint(caliper_on_field::<RoleTransitionRecord<BaseRecord>>(
+                "father_birth_year",
+                1.0,
+            ))
+            .with_constraints(vec![caliper_on_field("mother_birth_year", 1.0)])
+            .run();
+
+        assert_eq!(result.matched_cases, 1);
+        assert_eq!(result.pairs[0].control_id, "passes_both");
+    }
+
+    #[test]
+    fn with_constraints_takes_a_list_of_boxed_constraints() {
+        use crate::constraints::{GenderMatch, caliper_on_field};
+        use crate::types::RoleTransitionRecord;
+
+        // The nameable form, and the only one that mixes constraint kinds in a
+        // single runtime list: `Box<C>` is a `Constraint`, so the vector is a
+        // group. A caller whose config names both an exact key and a caliper
+        // ends up here.
+        type Rule = Box<dyn Constraint<RoleTransitionRecord<BaseRecord>>>;
+
+        let mut case = child("case", Some(date(2012, 1, 1)), 1980.0, 1978.0);
+        case.record
+            .strata
+            .insert("sex".to_string(), "F".to_string());
+        let mut wrong_sex = child("wrong_sex", None, 1980.0, 1978.0);
+        wrong_sex
+            .record
+            .strata
+            .insert("sex".to_string(), "M".to_string());
+        let mut far = child("far", None, 1996.0, 1978.0);
+        far.record.strata.insert("sex".to_string(), "F".to_string());
+        let mut right = child("right", None, 1981.0, 1978.0);
+        right
+            .record
+            .strata
+            .insert("sex".to_string(), "F".to_string());
+
+        let rules: Vec<Rule> = vec![
+            Box::new(GenderMatch::on_key("sex")),
+            Box::new(caliper_on_field::<RoleTransitionRecord<BaseRecord>>(
+                "mother_birth_year",
+                1.0,
+            )) as Rule,
+        ];
+
+        let result = MatchJob::new_transition(&[case, wrong_sex, far, right], 42)
+            .with_ratio(MatchRatio::new(1).expect("non-zero ratio"))
+            .with_constraints(rules)
+            .run();
+
+        assert_eq!(result.matched_cases, 1);
+        assert_eq!(result.pairs[0].control_id, "right");
     }
 }

@@ -12,8 +12,8 @@ mod subclassification;
 mod weights;
 
 pub use constraints::{
-    CaliperConstraint, Constraint, ConstraintContext, ConstraintGroup, ExactMatchConstraint,
-    StrataExactConstraint, UsedControlsVec,
+    CaliperConstraint, Chained, Constraint, ConstraintContext, ConstraintGroup,
+    ExactMatchConstraint, StrataExactConstraint, UsedControlsVec,
 };
 pub use distance::{
     DateDistance, DistanceChannel, DistanceConfig, DistanceMetric, IdMapMahalanobisDistance,

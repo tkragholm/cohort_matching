@@ -92,12 +92,19 @@ where
 /// The field is read through [`MatchingRecord::numeric`], and a record that does
 /// not carry it refuses the pair — an unverifiable constraint has not been
 /// satisfied.
+///
+/// The returned caliper owns its field name, so `use<R>` states that the opaque
+/// type captures only `R`. Without it, edition 2024 captures every lifetime in
+/// scope -- including the one behind `impl Into<String>` -- and a caller passing
+/// a `&str` gets back a caliper borrowing it, which cannot be returned from the
+/// helper that built it. That helper is the whole point: matching rules that
+/// come from configuration are built somewhere and used somewhere else.
 #[must_use]
 pub fn caliper_on_field<R: MatchingRecord>(
-    field: impl Into<String>,
+    field: &str,
     window: f64,
-) -> Caliper<R, impl Fn(&R) -> Option<f64> + Send + Sync> {
-    let field = field.into();
+) -> Caliper<R, impl Fn(&R) -> Option<f64> + Send + Sync + use<R>> {
+    let field = field.to_owned();
     Caliper::on(move |record: &R| record.numeric(&field), window)
 }
 

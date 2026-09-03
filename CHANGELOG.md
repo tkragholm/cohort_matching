@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-03
+
+### Added
+- **A constraint group whose length is decided at run time.** `MatchJob` composes
+  constraints into a tuple, so `.with_constraint(a).with_constraint(b)` is
+  `(((), A), B)` and the number of constraints is fixed at compile time. A caller
+  whose matching rules come from configuration does not have that number until it
+  reads the file. `Vec<C>` is now a `ConstraintGroup`, `Chained<G1, G2>` composes
+  two groups so one can be appended to a statically built chain, and
+  `MatchJob::with_constraints(vec)` / `with_constraint_group(group)` append them.
+  An empty list adds nothing and refuses nothing.
+- **`Box<C>` is a `Constraint`,** so `Vec<Box<dyn Constraint<R>>>` is a group: the
+  nameable form, and the only one that mixes constraint kinds in a single runtime
+  list. Two compile-fail cases asserted the opposite on the stance that the group
+  is statically dispatched. The crate has always accepted `[&dyn Constraint<R>]`,
+  so dynamic dispatch was never actually excluded; what `Box` adds is OWNERSHIP,
+  without which a caller cannot build its constraints in a helper and return them.
+  Those two cases are replaced by an integration test asserting they are accepted,
+  at the same low-level entry points that used to reject them.
+- `caliper_on_field` is re-exported from `prelude::constraints`.
+
+### Changed
+- **`caliper_on_field` takes `&str` rather than `impl Into<String>`.** Under
+  edition 2024 an `impl Trait` return captures every lifetime in scope, so a
+  caller passing a non-`'static` `&str` got back a caliper borrowing it, which
+  could not be returned from the helper that built it -- and building rules
+  somewhere and using them elsewhere is the case this function exists for. The
+  return type now says `use<R>`, which requires that the field parameter not be an
+  anonymous type parameter. Pass `&field` where you passed an owned `String`;
+  string literals and `&str` are unaffected.
+
 ## [0.3.1] - 2026-09-03
 
 ### Fixed

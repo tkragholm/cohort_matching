@@ -125,6 +125,76 @@ where
     }
 }
 
+impl<R: MatchingRecord, C: Constraint<R> + ?Sized> Constraint<R> for Box<C> {
+    fn reason(&self) -> &'static str {
+        (**self).reason()
+    }
+
+    fn allows(&self, case: &R, control: &R, ctx: &ConstraintContext<'_>) -> bool {
+        (**self).allows(case, control, ctx)
+    }
+}
+
+/// A homogeneous group whose length is decided at run time.
+///
+/// The array impl above needs `N` at compile time, and the tuple impls need the
+/// shape at compile time. Neither can express "the constraints named in the
+/// configuration file", which is the shape a caller ends up with once
+/// [`crate::constraints::caliper_on_field`] lets it build one per named field.
+///
+/// `caliper_on_field` returns an unnameable opaque type, so a `Vec` of them can
+/// be inferred from a `map`/`collect` but not written down. A caller that needs
+/// to name the type, or to mix constraint kinds in one list, can use
+/// `Vec<Box<dyn Constraint<R>>>`: `Box<C>` is itself a `Constraint`.
+impl<R: MatchingRecord, C> ConstraintGroup<R> for Vec<C>
+where
+    C: Constraint<R>,
+{
+    fn first_blocking_reason(
+        &self,
+        case: &R,
+        control: &R,
+        ctx: &ConstraintContext<'_>,
+    ) -> Option<&'static str> {
+        self.iter().find_map(|constraint| {
+            (!constraint.allows(case, control, ctx)).then_some(constraint.reason())
+        })
+    }
+}
+
+/// Two groups checked in order, `first` before `second`.
+///
+/// `MatchJob` composes constraints into a tuple, so its group type is built at
+/// compile time: `.with_constraint(a).with_constraint(b)` is `(((), A), B)`.
+/// That leaves no way to append a group whose own length is not known until run
+/// time, because the `(G, C)` impl takes a single `Constraint` on the right.
+/// `Chained` takes a `ConstraintGroup` on both sides, which is what
+/// [`MatchJob::with_constraint_group`] appends through.
+///
+/// The first blocking reason is reported, and `first` is asked before `second`,
+/// so a caller that puts its cheap constraints first keeps them first.
+pub struct Chained<G1, G2> {
+    pub first: G1,
+    pub second: G2,
+}
+
+impl<R: MatchingRecord, G1, G2> ConstraintGroup<R> for Chained<G1, G2>
+where
+    G1: ConstraintGroup<R>,
+    G2: ConstraintGroup<R>,
+{
+    fn first_blocking_reason(
+        &self,
+        case: &R,
+        control: &R,
+        ctx: &ConstraintContext<'_>,
+    ) -> Option<&'static str> {
+        self.first
+            .first_blocking_reason(case, control, ctx)
+            .or_else(|| self.second.first_blocking_reason(case, control, ctx))
+    }
+}
+
 impl<R: MatchingRecord, G, C> ConstraintGroup<R> for (G, C)
 where
     G: ConstraintGroup<R>,
