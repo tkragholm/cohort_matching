@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-03
+
+### Added
+- **Calipers you can address by name, so a caller can configure N of them.**
+  `MatchingRecord::numeric(name)` is the numeric counterpart to `strata()`: it
+  returns `Option<f64>` and is defaulted to `None`, so no existing implementor
+  changes. `BaseRecord` carries `numerics: HashMap<String, f64>` behind
+  `#[serde(default)]`, with a `with_numeric()` builder -- a cohort serialised
+  before this field deserialises with an empty map, and every caliper over it
+  then REFUSES the pair rather than admitting it, which is the safe direction
+  for a constraint. `caliper_on_field(field, window)` turns a `(field, window)`
+  pair read from configuration into a constraint, which `Caliper::on` could not:
+  it takes a selector, so every field needed a closure written at compile time,
+  and a list of pairs could not become a list of constraints.
+
+  The case that found it: a study matching children on birth date and their
+  parents on birth year measured 94.4% of matched comparators outside the
+  parental window its own methods section claims. The one date caliper the
+  matcher exposes was spent on the child, so the parental rule was measured
+  after matching and never imposed during it.
+
 ### Fixed
 - **Strata group order is deterministic across processes.** `group_anchors_by_strata`
   returned `HashMap::into_values()`, and `std`'s `RandomState` is seeded per process,
@@ -18,6 +39,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clustered bootstrap draws in the order rows arrive. Groups now come back in
   first-appearance order, which makes the output order a function of the input order
   and therefore something the caller can control.
+
+### Changed
+- `usize_to_f64` no longer saturates. It was
+  `f64::from(u32::try_from(n).unwrap_or(u32::MAX))`, so every cohort above
+  4,294,967,295 counted as exactly that many; a count that silently stops
+  rising is the wrong failure mode for a diagnostic. `as f64` is exact to 2^53
+  and agrees with the old form everywhere below saturation.
+- `split_covariate_keys_by_kind` builds the kind map in one sweep instead of
+  asking `covariate_kind` per key, which rescanned the case list and then the
+  control list for every key. First-wins in the same order, so the answer is
+  unchanged, including the fall-through to Categorical for a key absent
+  everywhere.
+- `refresh_predictions` replaces four copies of the same nine-line IRLS
+  prediction refresh, so a clip or a dot product has one place to drift.
+- `to_dimension` uses `isqrt` instead of searching upward for an integer square
+  root.
+
+## [0.2.0] - 2026-04-17
 
 ### Changed
 - Added `itertools` to simplify collection, sorting, and deduplication logic in matching and role-transition helpers.

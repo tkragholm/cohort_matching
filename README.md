@@ -11,12 +11,13 @@ Caliper-based cohort matching for observational studies.
 - **Standard Constraint Helpers**: Built-in builder helpers like `.with_gender_match()`, `.with_alive_check()`, and `.with_resident_check(...)`.
 - **Research-Ready Exports**: Integrated CSV reporting for balance diagnostics and matching summaries.
 - **Flexible Distance Metrics**: Support for exact match, birth date calipers, Propensity Scores, and Mahalanobis distance.
+- **Named Numeric Calipers**: `caliper_on_field("mother_birth_year", 1.0)` builds a constraint from a `(field, window)` pair, so a caller can configure as many as it needs from a list rather than writing a closure per field. A record missing the field refuses the pair.
 
 ## Installation
 
 ```toml
 [dependencies]
-cohort_matching = { version = "0.2.0", features = ["reporting"] }
+cohort_matching = { version = "0.3.0", features = ["reporting"] }
 ```
 
 ## Quick Start: Standard Matching
