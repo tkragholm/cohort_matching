@@ -21,6 +21,12 @@ pub trait MatchingRecord: Send + Sync {
     /// `None` means "this record has no such value", and every caliper treats
     /// that as a refusal rather than a pass: an unverifiable constraint has not
     /// been satisfied. Defaulted so existing implementors are unaffected.
+    ///
+    /// A WRAPPER TYPE MUST FORWARD THIS, exactly as it forwards `strata()`. The
+    /// default makes a missing forward compile, and the pair is then refused on
+    /// a field the inner record actually carries -- which looks like a caliper
+    /// that is far too tight rather than like a bug. `RoleTransitionRecord` and
+    /// `BalanceRecord` forward it, and `caliper_reads_through_*` pins that.
     fn numeric(&self, _name: &str) -> Option<f64> {
         None
     }
@@ -94,6 +100,10 @@ impl MatchingRecord for BalanceRecord {
         &self.core.strata
     }
 
+    fn numeric(&self, name: &str) -> Option<f64> {
+        self.core.numerics.get(name).copied()
+    }
+
     fn unique_key(&self) -> Option<&str> {
         self.core.unique_key.as_deref()
     }
@@ -124,6 +134,10 @@ impl<R: MatchingRecord> MatchingRecord for RoleTransitionRecord<R> {
 
     fn strata(&self) -> &HashMap<String, String> {
         self.record.strata()
+    }
+
+    fn numeric(&self, name: &str) -> Option<f64> {
+        self.record.numeric(name)
     }
 
     fn unique_key(&self) -> Option<&str> {

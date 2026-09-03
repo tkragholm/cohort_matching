@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-03
+
+### Fixed
+- **`numeric()` is forwarded by the wrapper record types.** `RoleTransitionRecord`
+  and `BalanceRecord` forward every other accessor to the record they wrap and did
+  not forward this one, so both fell through to the trait default of `None` -- and
+  a caliper reads `None` as a refusal. Every named caliper therefore refused every
+  pair, on a field the inner record actually carried. It compiled because the
+  method is defaulted, and it does not look like a bug from the outside: it looks
+  like a caliper set far too tight. `RoleTransitionRecord` is the record type
+  risk-set matching takes, so on 0.3.0 named calipers were unusable in exactly the
+  incidence-density design they were added for. Two tests pin the forwarding, one
+  per wrapper, and the trait doc now says a wrapper must forward it.
+
 ## [0.3.0] - 2026-09-03
 
 ### Added

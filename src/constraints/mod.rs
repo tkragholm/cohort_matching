@@ -487,7 +487,7 @@ mod named_caliper_tests {
     /// `Caliper::allows` takes `_ctx` and ignores it -- the constraint is a
     /// comparison of two records and nothing else -- but the trait's signature
     /// requires one, so it is built rather than mocked.
-    fn allows_field(field: &str, case: &BaseRecord, control: &BaseRecord, window: f64) -> bool {
+    fn allows_field<R: MatchingRecord>(field: &str, case: &R, control: &R, window: f64) -> bool {
         use crate::matching::UsedControlsVec;
         use crate::types::{ControlIdx, MatchingCriteria, UniqueValueId};
         use rapidhash::RapidHashMap;
@@ -506,7 +506,7 @@ mod named_caliper_tests {
             case_strata_values: None,
             control_strata_values: None,
         };
-        let constraint = caliper_on_field::<BaseRecord>(field, window);
+        let constraint = caliper_on_field::<R>(field, window);
         constraint.allows(case, control, &ctx)
     }
 
@@ -598,5 +598,63 @@ mod named_caliper_tests {
         let record = BaseRecord::new("a", day(2000, 1, 1));
         assert!(record.numerics.is_empty());
         assert_eq!(record.numeric("parent_birth_year"), None);
+    }
+
+    #[test]
+    fn caliper_reads_through_a_role_transition_record() {
+        // `numeric()` is defaulted to `None`, so a wrapper that forgets to
+        // forward it COMPILES and then refuses every pair on a field the inner
+        // record carries. Risk-set matching is the only mode this crate offers
+        // for incidence-density designs, and `RoleTransitionRecord` is the
+        // record type it takes, so a missing forward here would mean named
+        // calipers never match anything at all.
+        use crate::types::RoleTransitionRecord;
+
+        let wrap = |id: &str, year: f64| {
+            RoleTransitionRecord::from_record(
+                BaseRecord::new(id, day(2000, 1, 1)).with_numeric("parent_birth_year", year),
+                Some(day(2010, 1, 1)),
+            )
+        };
+
+        assert!(allows_field(
+            "parent_birth_year",
+            &wrap("a", 1980.0),
+            &wrap("b", 1981.0),
+            1.0
+        ));
+        assert!(!allows_field(
+            "parent_birth_year",
+            &wrap("a", 1980.0),
+            &wrap("b", 1982.0),
+            1.0
+        ));
+    }
+
+    #[test]
+    fn caliper_reads_through_a_balance_record() {
+        use crate::types::BalanceRecord;
+
+        let wrap = |id: &str, year: f64| {
+            let mut record = BalanceRecord::new(id, day(2000, 1, 1));
+            record
+                .core
+                .numerics
+                .insert("parent_birth_year".to_string(), year);
+            record
+        };
+
+        assert!(allows_field(
+            "parent_birth_year",
+            &wrap("a", 1980.0),
+            &wrap("b", 1981.0),
+            1.0
+        ));
+        assert!(!allows_field(
+            "parent_birth_year",
+            &wrap("a", 1980.0),
+            &wrap("b", 1982.0),
+            1.0
+        ));
     }
 }
