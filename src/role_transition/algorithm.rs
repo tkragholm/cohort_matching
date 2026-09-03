@@ -713,7 +713,6 @@ mod tests {
     use crate::matching::{DeterministicSelection, DistanceConfig, RandomSelection};
     use crate::types::{AgeLimitYears, BaseRecord, Estimand, MatchRatio, RoleTransitionRecord};
     use chrono::NaiveDate;
-    use std::collections::HashMap;
 
     fn ratio(value: usize) -> MatchRatio {
         MatchRatio::new(value).expect("non-zero ratio")

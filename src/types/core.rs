@@ -136,6 +136,13 @@ pub struct BaseRecord {
     pub birth_date: NaiveDate,
     /// Exact-match strata fields.
     pub strata: HashMap<String, String>,
+    /// Named numeric fields, for caliper constraints beyond the birth date.
+    ///
+    /// `#[serde(default)]` so a record serialised before this field existed
+    /// still deserialises: the map is then empty and every caliper over it
+    /// refuses, which is the safe direction for a constraint.
+    #[serde(default)]
+    pub numerics: HashMap<String, f64>,
     /// Optional generic uniqueness key.
     pub unique_key: Option<String>,
     /// Optional death date.
@@ -153,10 +160,18 @@ impl BaseRecord {
             id: id.into(),
             birth_date,
             strata: HashMap::new(),
+            numerics: HashMap::new(),
             unique_key: None,
             death_date: None,
             emigration_date: None,
         }
+    }
+
+    /// Attach a named numeric value, for a [`crate::constraints::Caliper`].
+    #[must_use]
+    pub fn with_numeric(mut self, name: impl Into<String>, value: f64) -> Self {
+        self.numerics.insert(name.into(), value);
+        self
     }
 
     /// Set an optional death date for the record.

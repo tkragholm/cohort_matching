@@ -449,7 +449,6 @@ mod tests {
     use crate::date;
     use crate::types::BaseRecord;
     use chrono::NaiveDate;
-    use std::collections::HashMap;
 
     #[derive(Clone)]
     struct DemoRecord {

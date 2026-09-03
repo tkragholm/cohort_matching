@@ -550,7 +550,6 @@ mod tests {
     fn match_job_with_resident_check_helper() {
         use crate::types::RoleTransitionRecord;
         use chrono::NaiveDate;
-        use std::collections::HashMap;
 
         #[derive(Clone)]
         struct ResidencyRecord {
@@ -653,8 +652,7 @@ mod tests {
         );
         // Emigrated after the case index date -> still resident at index.
         let c2_resident = RoleTransitionRecord::from_record(
-            BaseRecord::new("c2_resident", date(2010, 1, 1))
-                .with_emigration_date(date(2015, 1, 1)),
+            BaseRecord::new("c2_resident", date(2010, 1, 1)).with_emigration_date(date(2015, 1, 1)),
             None,
         );
 
@@ -680,8 +678,7 @@ mod tests {
         // Emigration exactly on the case index date: residency is strict (> index),
         // so this control is non-resident and the only candidate is dropped.
         let c_boundary = RoleTransitionRecord::from_record(
-            BaseRecord::new("c_boundary", date(2010, 1, 1))
-                .with_emigration_date(date(2012, 1, 1)),
+            BaseRecord::new("c_boundary", date(2010, 1, 1)).with_emigration_date(date(2012, 1, 1)),
             None,
         );
 

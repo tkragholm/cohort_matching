@@ -82,6 +82,25 @@ where
     crate::impl_with_reason!();
 }
 
+/// A caliper on a named numeric field, for callers configuring N of them.
+///
+/// [`Caliper::on`] takes a selector, which means a caller wiring calipers from
+/// configuration has to write one closure per field at compile time. This is the
+/// same constraint addressed by NAME, so a list of `(field, window)` pairs read
+/// from a config file becomes a list of constraints.
+///
+/// The field is read through [`MatchingRecord::numeric`], and a record that does
+/// not carry it refuses the pair — an unverifiable constraint has not been
+/// satisfied.
+#[must_use]
+pub fn caliper_on_field<R: MatchingRecord>(
+    field: impl Into<String>,
+    window: f64,
+) -> Caliper<R, impl Fn(&R) -> Option<f64> + Send + Sync> {
+    let field = field.into();
+    Caliper::on(move |record: &R| record.numeric(&field), window)
+}
+
 impl<R: MatchingRecord, F> Constraint<R> for Caliper<R, F>
 where
     F: Fn(&R) -> Option<f64> + Send + Sync,
@@ -442,5 +461,142 @@ mod tests {
 
         assert!(constraint.allows(&case_late, &res_ctrl, &ctx));
         assert!(!constraint.allows(&case_late, &non_res_ctrl, &ctx));
+    }
+}
+
+#[cfg(test)]
+mod named_caliper_tests {
+    use super::*;
+    use crate::types::BaseRecord;
+    use chrono::NaiveDate;
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).expect("valid date")
+    }
+
+    fn record(id: &str, value: Option<f64>) -> BaseRecord {
+        let base = BaseRecord::new(id, day(2000, 1, 1));
+        match value {
+            Some(v) => base.with_numeric("parent_birth_year", v),
+            None => base,
+        }
+    }
+
+    /// A context the caliper does not read.
+    ///
+    /// `Caliper::allows` takes `_ctx` and ignores it -- the constraint is a
+    /// comparison of two records and nothing else -- but the trait's signature
+    /// requires one, so it is built rather than mocked.
+    fn allows_field(field: &str, case: &BaseRecord, control: &BaseRecord, window: f64) -> bool {
+        use crate::matching::UsedControlsVec;
+        use crate::types::{ControlIdx, MatchingCriteria, UniqueValueId};
+        use rapidhash::RapidHashMap;
+        use rustc_hash::FxHashSet;
+
+        let criteria = MatchingCriteria::default();
+        let used_controls = UsedControlsVec::with_capacity(0);
+        let used_unique: FxHashSet<UniqueValueId> = FxHashSet::default();
+        let interner: RapidHashMap<String, UniqueValueId> = RapidHashMap::default();
+        let ctx = ConstraintContext {
+            criteria: &criteria,
+            used_controls: &used_controls,
+            used_unique: &used_unique,
+            unique_interner: &interner,
+            control_idx: ControlIdx::new(0),
+            case_strata_values: None,
+            control_strata_values: None,
+        };
+        let constraint = caliper_on_field::<BaseRecord>(field, window);
+        constraint.allows(case, control, &ctx)
+    }
+
+    fn allows(case: &BaseRecord, control: &BaseRecord, window: f64) -> bool {
+        allows_field("parent_birth_year", case, control, window)
+    }
+
+    #[test]
+    fn a_pair_inside_the_window_is_allowed() {
+        // The rule this exists for: "parental birth years (+/- 1 year)".
+        assert!(allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1981.0)),
+            1.0
+        ));
+        assert!(allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1979.0)),
+            1.0
+        ));
+        assert!(allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1980.0)),
+            1.0
+        ));
+    }
+
+    #[test]
+    fn a_pair_outside_the_window_is_refused() {
+        assert!(!allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1982.0)),
+            1.0
+        ));
+        // The gap the first production run measured at the 95th percentile.
+        assert!(!allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1996.0)),
+            1.0
+        ));
+    }
+
+    #[test]
+    fn the_window_is_inclusive_at_its_edge() {
+        // A caliper of "+/- 1 year" admits exactly one year, which is the
+        // difference between the rule as written and the rule as coded.
+        assert!(allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1981.0)),
+            1.0
+        ));
+        assert!(!allows(
+            &record("a", Some(1980.0)),
+            &record("b", Some(1981.5)),
+            1.0
+        ));
+    }
+
+    #[test]
+    fn a_record_without_the_field_refuses() {
+        // An unverifiable constraint has not been satisfied. A child with no
+        // recorded parent is 1.1% of mothers and 3.7% of fathers on the real
+        // cohort, and admitting them would be silently dropping the constraint
+        // for exactly the records that cannot support it.
+        assert!(!allows(&record("a", Some(1980.0)), &record("b", None), 1.0));
+        assert!(!allows(&record("a", None), &record("b", Some(1980.0)), 1.0));
+        assert!(!allows(&record("a", None), &record("b", None), 1.0));
+    }
+
+    #[test]
+    fn calipers_on_different_fields_are_independent() {
+        // The point of naming them: N constraints from a list, not one baked
+        // into the record type.
+        let case = BaseRecord::new("a", day(2000, 1, 1))
+            .with_numeric("mother_birth_year", 1980.0)
+            .with_numeric("father_birth_year", 1975.0);
+        let control = BaseRecord::new("b", day(2000, 1, 1))
+            .with_numeric("mother_birth_year", 1981.0)
+            .with_numeric("father_birth_year", 1990.0);
+        assert!(allows_field("mother_birth_year", &case, &control, 1.0));
+        assert!(!allows_field("father_birth_year", &case, &control, 1.0));
+    }
+
+    #[test]
+    fn a_record_carries_no_numerics_unless_given_one() {
+        // The field is `#[serde(default)]`, so a cohort serialised before it
+        // existed deserialises with an empty map -- and every caliper over it
+        // then refuses rather than passes, which is the safe direction.
+        let record = BaseRecord::new("a", day(2000, 1, 1));
+        assert!(record.numerics.is_empty());
+        assert_eq!(record.numeric("parent_birth_year"), None);
     }
 }

@@ -9,6 +9,21 @@ pub trait MatchingRecord: Send + Sync {
     fn birth_date(&self) -> NaiveDate;
     /// Map of categorical values used for exact strata matching.
     fn strata(&self) -> &HashMap<String, String>;
+    /// A named numeric field, for [`crate::constraints::Caliper`] constraints.
+    ///
+    /// The crate has had a generic numeric caliper since 0.1, and no way to
+    /// address a field by name: `strata()` carries arbitrary CATEGORICAL values
+    /// for exact matching and there was no numeric counterpart, so a caller with
+    /// two numeric constraints had to bake the second one into its record type.
+    /// A study matching on a child's birth date and a parent's birth year is the
+    /// case that found it.
+    ///
+    /// `None` means "this record has no such value", and every caliper treats
+    /// that as a refusal rather than a pass: an unverifiable constraint has not
+    /// been satisfied. Defaulted so existing implementors are unaffected.
+    fn numeric(&self, _name: &str) -> Option<f64> {
+        None
+    }
     /// Optional key for ensuring uniqueness (e.g., family ID).
     fn unique_key(&self) -> Option<&str>;
     /// Optional death date. If provided, used by [`MustBeAlive`] constraints.
@@ -47,6 +62,10 @@ impl MatchingRecord for BaseRecord {
 
     fn strata(&self) -> &HashMap<String, String> {
         &self.strata
+    }
+
+    fn numeric(&self, name: &str) -> Option<f64> {
+        self.numerics.get(name).copied()
     }
 
     fn unique_key(&self) -> Option<&str> {
@@ -133,7 +152,8 @@ impl<R: MatchingRecord> ResidentAtIndexRecord for RoleTransitionRecord<R> {
     /// semantics: a control with no emigration date is treated as resident, and
     /// one that emigrated strictly after the case index date is still resident.
     fn is_resident_at(&self, index_date: NaiveDate) -> bool {
-        self.emigration_date().map_or(true, |emigration| emigration > index_date)
+        self.emigration_date()
+            .is_none_or(|emigration| emigration > index_date)
     }
 }
 
