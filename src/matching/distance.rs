@@ -1,6 +1,7 @@
 use super::records::MatchingRecord;
 use crate::types::DistanceCaliper;
-use faer::Mat;
+use faer::linalg::matmul::matmul;
+use faer::{Accum, Mat, MatMut, MatRef, get_global_parallelism};
 use ordered_float::OrderedFloat;
 use rapidhash::RapidHashMap;
 use std::collections::BTreeMap;
@@ -256,6 +257,16 @@ impl<'a> IdMapMahalanobisDistance<'a> {
         }
     }
 }
+
+/// Dimensions up to this size keep the two scratch vectors on the stack.
+const STACK_DIMENSION: usize = 32;
+
+/// `delta' * M * delta` through faer's matmul, called exactly as `&Mat * &Mat`
+/// calls it: same kernel, same operand layout, `Accum::Replace`, global
+/// parallelism, but into scratch buffers rather than three new matrices. faer
+/// picks its kernel from shape, stride and the CPU's SIMD level, so the result
+/// is bit-identical to the operator form. It must stay so: any other summation
+/// order moves the last bits, and with them pairs at the caliper boundary.
 fn mahalanobis_distance_faer(
     left: &[f64],
     right: &[f64],
@@ -269,9 +280,38 @@ fn mahalanobis_distance_faer(
         return None;
     }
 
-    let delta = Mat::from_fn(dimension, 1, |row, _| left[row] - right[row]);
-    let transformed = inverse_covariance_matrix * &delta;
-    let distance_sq = (delta.transpose() * transformed)[(0, 0)];
+    let mut stack = [0.0_f64; 2 * STACK_DIMENSION];
+    let mut heap = Vec::new();
+    let scratch = if dimension <= STACK_DIMENSION {
+        &mut stack[..2 * dimension]
+    } else {
+        heap.resize(2 * dimension, 0.0);
+        heap.as_mut_slice()
+    };
+    let (delta, transformed) = scratch.split_at_mut(dimension);
+    for ((slot, left), right) in delta.iter_mut().zip(left).zip(right) {
+        *slot = left - right;
+    }
+    let delta = MatRef::from_column_major_slice(delta, dimension, 1);
+
+    matmul(
+        MatMut::from_column_major_slice_mut(transformed, dimension, 1),
+        Accum::Replace,
+        inverse_covariance_matrix.as_ref(),
+        delta,
+        1.0,
+        get_global_parallelism(),
+    );
+    let mut distance_sq = [0.0_f64];
+    matmul(
+        MatMut::from_column_major_slice_mut(&mut distance_sq, 1, 1),
+        Accum::Replace,
+        delta.transpose(),
+        MatRef::from_column_major_slice(transformed, dimension, 1),
+        1.0,
+        get_global_parallelism(),
+    );
+    let distance_sq = distance_sq[0];
 
     if !distance_sq.is_finite() || distance_sq < -1e-12 {
         return None;
@@ -600,6 +640,50 @@ mod tests {
             .expect("faer distance should be computable");
 
         assert!((scalar - faer).abs() < 1e-12);
+    }
+
+    /// The same quadratic form through faer's operators, which allocate.
+    fn mahalanobis_distance_operator_form(
+        left: &[f64],
+        right: &[f64],
+        inverse_covariance_matrix: &Mat<f64>,
+    ) -> Option<f64> {
+        let dimension = inverse_covariance_matrix.nrows();
+        let delta = Mat::from_fn(dimension, 1, |row, _| left[row] - right[row]);
+        let transformed = inverse_covariance_matrix * &delta;
+        let distance_sq = (delta.transpose() * transformed)[(0, 0)];
+        if !distance_sq.is_finite() || distance_sq < -1e-12 {
+            return None;
+        }
+        Some(distance_sq.max(0.0).sqrt())
+    }
+
+    #[test]
+    fn mahalanobis_matches_operator_form_bit_for_bit() {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let unit = (state >> 11) as f64 / (1_u64 << 53) as f64;
+            let exponent = i32::try_from(state % 7).expect("small") - 3;
+            (2.0f64.mul_add(unit, -1.0)) * 10f64.powi(exponent)
+        };
+        // Both sides of STACK_DIMENSION, so the heap path is covered too.
+        for dimension in (0..=12).chain([31, 32, 33, 40]) {
+            for _ in 0..200 {
+                let inverse = Mat::from_fn(dimension, dimension, |_, _| next());
+                let left = (0..dimension).map(|_| next()).collect::<Vec<_>>();
+                let right = (0..dimension).map(|_| next()).collect::<Vec<_>>();
+                let expected = mahalanobis_distance_operator_form(&left, &right, &inverse);
+                let actual = mahalanobis_distance_faer(&left, &right, &inverse);
+                assert_eq!(
+                    expected.map(f64::to_bits),
+                    actual.map(f64::to_bits),
+                    "dimension {dimension}"
+                );
+            }
+        }
     }
 
     fn mahalanobis_distance_scalar_reference(
