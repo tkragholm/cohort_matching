@@ -325,11 +325,18 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
             )
         });
 
+        // Exclusions are tallied by reason string here and entered into the
+        // diagnostics once per pool. `ConstraintReason::from_reason_str`
+        // allocates for every string it has no variant for, which is most of
+        // the built-in ones, and this loop runs once per candidate.
+        let mut filtered_out = 0_usize;
+        let mut constraint_exclusions: Vec<(&'static str, usize)> = Vec::new();
+
         for idx in candidate_indices {
             let control = &self.controls[idx];
 
             if !additional_filter(idx, control) {
-                bump_count(diagnostics, ExclusionReason::AdditionalFilter);
+                filtered_out += 1;
                 continue;
             }
 
@@ -356,14 +363,32 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
                 extra_constraints,
                 &context,
             ) {
-                bump_count(
-                    diagnostics,
-                    ExclusionReason::Constraint(ConstraintReason::from_reason_str(reason)),
-                );
+                match constraint_exclusions
+                    .iter_mut()
+                    .find(|(seen, _)| *seen == reason)
+                {
+                    Some((_, count)) => *count += 1,
+                    None => constraint_exclusions.push((reason, 1)),
+                }
                 continue;
             }
 
             eligible.push(idx);
+        }
+
+        if filtered_out > 0 {
+            *diagnostics
+                .exclusion_counts
+                .entry(ExclusionReason::AdditionalFilter)
+                .or_insert(0) += filtered_out;
+        }
+        for (reason, count) in constraint_exclusions {
+            *diagnostics
+                .exclusion_counts
+                .entry(ExclusionReason::Constraint(
+                    ConstraintReason::from_reason_str(reason),
+                ))
+                .or_insert(0) += count;
         }
 
         // Determinism: the candidate pool's order is otherwise inherited from the
@@ -836,10 +861,6 @@ fn precompute_strata_values<'a, R: MatchingRecord>(
             .map(|c| build_strata_values(c.strata(), strata_keys))
             .collect(),
     )
-}
-
-fn bump_count(diagnostics: &mut MatchDiagnostics, reason: ExclusionReason) {
-    *diagnostics.exclusion_counts.entry(reason).or_insert(0) += 1;
 }
 
 pub fn build_outcome(
