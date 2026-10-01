@@ -3,10 +3,7 @@ use super::constraints::{
     NoSelfMatchConstraint, ReplacementConstraint, UniqueKeyConstraint, UsedControlsVec,
     build_strata_values, unique_value,
 };
-use super::distance::{
-    DateDistance, DistanceChannel, DistanceConfig, DistanceMetric, IdMapMahalanobisDistance,
-    IdMapPropensityScoreDistance,
-};
+use super::distance::{DateDistance, DistanceChannel, DistanceConfig, DistanceMetric};
 use super::index::CandidateIndex;
 use super::ratio::RatioPolicy;
 use super::records::MatchingRecord;
@@ -715,83 +712,35 @@ pub fn match_standard<
     let diagnostics =
         initial_diagnostics(anchors.len(), criteria.estimand, criteria.common_support);
 
+    // The unconfigured path is the common one, so it keeps the concrete date
+    // metric rather than paying `ConfiguredMetric`'s match on every candidate.
     match request.distance_config {
-        None => {
-            let date_distance = DateDistance;
-            engine.run_anchor_matching_with_distance_internal(
-                anchors,
-                &DistanceRunConfig {
-                    distance_metric: &date_distance,
-                    distance_caliper: criteria.typed_birth_date_caliper(),
-                    use_birth_date_index: true,
-                    caliper_reason: "date_caliper",
-                },
-                request.constraints,
-                &ratio_policy,
-                TrimmedIndexConfig::default(),
-                diagnostics,
-            )
-        }
-        Some(distance_config) => match distance_config {
-            DistanceConfig::Date { caliper, reason } => {
-                let metric = DateDistance;
-                engine.run_anchor_matching_with_distance_internal(
-                    anchors,
-                    &DistanceRunConfig {
-                        distance_metric: &metric,
-                        distance_caliper: *caliper,
-                        use_birth_date_index: false,
-                        caliper_reason: reason,
-                    },
-                    request.constraints,
-                    &ratio_policy,
-                    TrimmedIndexConfig::default(),
-                    diagnostics,
-                )
-            }
-            DistanceConfig::PropensityScoreMap {
-                scores,
-                caliper,
-                reason,
-            } => {
-                let metric = IdMapPropensityScoreDistance::new(scores);
-                engine.run_anchor_matching_with_distance_internal(
-                    anchors,
-                    &DistanceRunConfig {
-                        distance_metric: &metric,
-                        distance_caliper: *caliper,
-                        use_birth_date_index: false,
-                        caliper_reason: reason,
-                    },
-                    request.constraints,
-                    &ratio_policy,
-                    TrimmedIndexConfig::default(),
-                    diagnostics,
-                )
-            }
-            DistanceConfig::MahalanobisMap {
-                vectors,
-                inverse_covariance,
-                dimension,
-                caliper,
-                reason,
-            } => {
-                let metric = IdMapMahalanobisDistance::new(vectors, inverse_covariance, *dimension);
-                engine.run_anchor_matching_with_distance_internal(
-                    anchors,
-                    &DistanceRunConfig {
-                        distance_metric: &metric,
-                        distance_caliper: *caliper,
-                        use_birth_date_index: false,
-                        caliper_reason: reason,
-                    },
-                    request.constraints,
-                    &ratio_policy,
-                    TrimmedIndexConfig::default(),
-                    diagnostics,
-                )
-            }
-        },
+        None => engine.run_anchor_matching_with_distance_internal(
+            anchors,
+            &DistanceRunConfig {
+                distance_metric: &DateDistance,
+                distance_caliper: criteria.typed_birth_date_caliper(),
+                use_birth_date_index: true,
+                caliper_reason: "date_caliper",
+            },
+            request.constraints,
+            &ratio_policy,
+            TrimmedIndexConfig::default(),
+            diagnostics,
+        ),
+        Some(config) => engine.run_anchor_matching_with_distance_internal(
+            anchors,
+            &DistanceRunConfig {
+                distance_metric: &config.metric(),
+                distance_caliper: config.typed_caliper(),
+                use_birth_date_index: false,
+                caliper_reason: config.reason(),
+            },
+            request.constraints,
+            &ratio_policy,
+            TrimmedIndexConfig::default(),
+            diagnostics,
+        ),
     }
 }
 

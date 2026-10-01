@@ -151,6 +151,71 @@ impl DistanceConfig {
     }
 }
 
+impl DistanceConfig {
+    /// The metric this configuration describes, borrowing its maps.
+    pub(crate) fn metric(&self) -> ConfiguredMetric<'_> {
+        match self {
+            Self::Date { .. } => ConfiguredMetric::Date(DateDistance),
+            Self::PropensityScoreMap { scores, .. } => {
+                ConfiguredMetric::PropensityScore(IdMapPropensityScoreDistance::new(scores))
+            }
+            Self::MahalanobisMap {
+                vectors,
+                inverse_covariance,
+                dimension,
+                ..
+            } => ConfiguredMetric::Mahalanobis(IdMapMahalanobisDistance::new(
+                vectors,
+                inverse_covariance,
+                *dimension,
+            )),
+        }
+    }
+
+    /// The scores common-support trimming needs, which only a propensity
+    /// configuration has.
+    pub(crate) const fn propensity_scores(&self) -> Option<&RapidHashMap<String, f64>> {
+        match self {
+            Self::PropensityScoreMap { scores, .. } => Some(scores),
+            Self::Date { .. } | Self::MahalanobisMap { .. } => None,
+        }
+    }
+}
+
+/// One of the metrics a [`DistanceConfig`] can name, so the matchers take a
+/// single metric type whichever variant the caller configured.
+pub(crate) enum ConfiguredMetric<'a> {
+    Date(DateDistance),
+    PropensityScore(IdMapPropensityScoreDistance<'a>),
+    Mahalanobis(IdMapMahalanobisDistance<'a>),
+}
+
+impl<R: MatchingRecord> DistanceMetric<R> for ConfiguredMetric<'_> {
+    fn channel(&self) -> &'static str {
+        match self {
+            Self::Date(metric) => DistanceMetric::<R>::channel(metric),
+            Self::PropensityScore(metric) => DistanceMetric::<R>::channel(metric),
+            Self::Mahalanobis(metric) => DistanceMetric::<R>::channel(metric),
+        }
+    }
+
+    fn distance(&self, anchor: &R, candidate: &R) -> Option<f64> {
+        match self {
+            Self::Date(metric) => metric.distance(anchor, candidate),
+            Self::PropensityScore(metric) => metric.distance(anchor, candidate),
+            Self::Mahalanobis(metric) => metric.distance(anchor, candidate),
+        }
+    }
+
+    fn candidate_indices(&self, anchor: &R, caliper: f64) -> Option<Vec<usize>> {
+        match self {
+            Self::Date(metric) => metric.candidate_indices(anchor, caliper),
+            Self::PropensityScore(metric) => metric.candidate_indices(anchor, caliper),
+            Self::Mahalanobis(metric) => metric.candidate_indices(anchor, caliper),
+        }
+    }
+}
+
 /// Propensity score distance keyed by [`MatchingRecord::id`].
 #[derive(Debug, Clone)]
 pub struct IdMapPropensityScoreDistance<'a> {

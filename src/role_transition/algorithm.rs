@@ -1,9 +1,8 @@
 use crate::matching::{
     CandidatePoolRequest, ConstraintGroup, DateDistance, DistanceChannel, DistanceConfig,
-    DistanceMetric, IdMapMahalanobisDistance, IdMapPropensityScoreDistance, MatchEngine,
-    RoleIndexedRecord, SelectionStrategy, UsedControlsVec, build_outcome,
-    finalize_estimand_diagnostics, invalid_common_support_outcome, invalid_criteria_outcome,
-    ratio::RatioPolicy, unique_value,
+    DistanceMetric, MatchEngine, RoleIndexedRecord, SelectionStrategy, UsedControlsVec,
+    build_outcome, finalize_estimand_diagnostics, invalid_common_support_outcome,
+    invalid_criteria_outcome, ratio::RatioPolicy, unique_value,
 };
 use crate::types::{
     CommonSupport, CommonSupportFailureReason, InvalidCriteriaReason, MatchDiagnostics,
@@ -101,166 +100,64 @@ pub fn match_transition<
     cohort: &[R],
     request: TransitionMatchRequest<'_, S, G, P>,
 ) -> MatchOutcome {
-    if let Some(distance_config) = request.distance_config {
-        return match_with_role_transition_with_strategy_and_constraint_group_and_distance_config_and_policy(
+    // Without a configuration the date metric runs off the birth-date index and
+    // the criteria's own window. That path is the common one, so it keeps the
+    // concrete metric rather than paying `ConfiguredMetric`'s match on every
+    // candidate.
+    let Some(config) = request.distance_config else {
+        let caliper = request.criteria.typed_birth_date_caliper();
+        return match_with_distance_channel(
             cohort,
-            request.criteria,
-            request.options,
-            request.strategy,
-            request.constraints,
-            distance_config,
-            request.risk_set_policy,
+            request,
+            DistanceChannel::new(&DateDistance, caliper),
+            true,
+            None,
+        );
+    };
+    let scores = config.propensity_scores();
+    if scores.is_none() && request.criteria.common_support.is_some() {
+        return invalid_common_support_outcome(
+            cohort.len(),
+            CommonSupportFailureReason::RequiresPropensityScoreMap,
         );
     }
-
-    match_with_role_transition_with_strategy_and_constraint_group_and_policy(
+    let metric = config.metric();
+    match_with_distance_channel(
         cohort,
-        request.criteria,
-        request.options,
+        request,
+        DistanceChannel::new(&metric, config.typed_caliper()).with_reason(config.reason()),
+        false,
+        scores,
+    )
+}
+
+fn match_with_distance_channel<
+    R: RoleIndexedRecord,
+    S: SelectionStrategy<R> + Clone + Send + Sync,
+    D: DistanceMetric<R> + Sync,
+    G: ConstraintGroup<R> + ?Sized,
+    P: RiskSetPolicy<R>,
+>(
+    cohort: &[R],
+    request: TransitionMatchRequest<'_, S, G, P>,
+    distance_channel: DistanceChannel<'_, R, D>,
+    use_birth_date_index: bool,
+    common_support_scores: Option<&RapidHashMap<String, f64>>,
+) -> MatchOutcome {
+    match_with_role_indexing_with_channel_internal(
+        cohort,
         request.strategy,
-        request.constraints,
-        request.risk_set_policy,
+        &RoleIndexingConfig {
+            criteria: request.criteria,
+            age_limit_years: request.options.transition_age_limit_years.get(),
+            ratio_fallback: &request.options.ratio_fallback,
+            extra_constraints: request.constraints,
+            distance_channel,
+            use_birth_date_index,
+            common_support_scores,
+            risk_set_policy: request.risk_set_policy,
+        },
     )
-}
-
-fn match_with_role_transition_with_strategy_and_constraint_group_and_policy<
-    R: RoleIndexedRecord,
-    S: SelectionStrategy<R> + Clone + Send + Sync,
-    P: RiskSetPolicy<R>,
-    G: ConstraintGroup<R> + ?Sized,
->(
-    cohort: &[R],
-    criteria: &MatchingCriteria,
-    options: &RoleTransitionOptions,
-    strategy: S,
-    extra_constraints: &G,
-    risk_set_policy: &P,
-) -> MatchOutcome {
-    match_with_role_indexing_and_policy_with_constraint_group(
-        cohort,
-        criteria,
-        options.transition_age_limit_years.get(),
-        &options.ratio_fallback,
-        strategy,
-        extra_constraints,
-        risk_set_policy,
-    )
-}
-
-fn match_with_role_transition_with_strategy_and_constraint_group_and_distance_config_and_policy<
-    R: RoleIndexedRecord,
-    S: SelectionStrategy<R> + Clone + Send + Sync,
-    P: RiskSetPolicy<R>,
-    G: ConstraintGroup<R> + ?Sized,
->(
-    cohort: &[R],
-    criteria: &MatchingCriteria,
-    options: &RoleTransitionOptions,
-    strategy: S,
-    extra_constraints: &G,
-    distance_config: &DistanceConfig,
-    risk_set_policy: &P,
-) -> MatchOutcome {
-    match_with_role_transition_with_strategy_and_constraints_and_distance_config_internal(
-        cohort,
-        criteria,
-        options,
-        strategy,
-        extra_constraints,
-        distance_config,
-        risk_set_policy,
-    )
-}
-
-fn match_with_role_transition_with_strategy_and_constraints_and_distance_config_internal<
-    R: RoleIndexedRecord,
-    S: SelectionStrategy<R> + Clone + Send + Sync,
-    P: RiskSetPolicy<R>,
-    G: ConstraintGroup<R> + ?Sized,
->(
-    cohort: &[R],
-    criteria: &MatchingCriteria,
-    options: &RoleTransitionOptions,
-    strategy: S,
-    extra_constraints: &G,
-    distance_config: &DistanceConfig,
-    risk_set_policy: &P,
-) -> MatchOutcome {
-    match distance_config {
-        DistanceConfig::Date { caliper, reason } => {
-            if criteria.common_support.is_some() {
-                return invalid_common_support_outcome(
-                    cohort.len(),
-                    CommonSupportFailureReason::RequiresPropensityScoreMap,
-                );
-            }
-            let metric = DateDistance;
-            match_with_role_indexing_with_channel_internal(
-                cohort,
-                strategy,
-                &RoleIndexingConfig {
-                    criteria,
-                    age_limit_years: options.transition_age_limit_years.get(),
-                    ratio_fallback: &options.ratio_fallback,
-                    extra_constraints,
-                    distance_channel: DistanceChannel::new(&metric, *caliper).with_reason(reason),
-                    use_birth_date_index: false,
-                    common_support_scores: None,
-                    risk_set_policy,
-                },
-            )
-        }
-        DistanceConfig::PropensityScoreMap {
-            scores,
-            caliper,
-            reason,
-        } => {
-            let metric = IdMapPropensityScoreDistance::new(scores);
-            match_with_role_indexing_with_channel_internal(
-                cohort,
-                strategy,
-                &RoleIndexingConfig {
-                    criteria,
-                    age_limit_years: options.transition_age_limit_years.get(),
-                    ratio_fallback: &options.ratio_fallback,
-                    extra_constraints,
-                    distance_channel: DistanceChannel::new(&metric, *caliper).with_reason(reason),
-                    use_birth_date_index: false,
-                    common_support_scores: Some(scores),
-                    risk_set_policy,
-                },
-            )
-        }
-        DistanceConfig::MahalanobisMap {
-            vectors,
-            inverse_covariance,
-            dimension,
-            caliper,
-            reason,
-        } => {
-            if criteria.common_support.is_some() {
-                return invalid_common_support_outcome(
-                    cohort.len(),
-                    CommonSupportFailureReason::RequiresPropensityScoreMap,
-                );
-            }
-            let metric = IdMapMahalanobisDistance::new(vectors, inverse_covariance, *dimension);
-            match_with_role_indexing_with_channel_internal(
-                cohort,
-                strategy,
-                &RoleIndexingConfig {
-                    criteria,
-                    age_limit_years: options.transition_age_limit_years.get(),
-                    ratio_fallback: &options.ratio_fallback,
-                    extra_constraints,
-                    distance_channel: DistanceChannel::new(&metric, *caliper).with_reason(reason),
-                    use_birth_date_index: false,
-                    common_support_scores: None,
-                    risk_set_policy,
-                },
-            )
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -414,40 +311,6 @@ fn transition_initial_diagnostics(
         common_support_candidate_score_bounds: filters.candidate_score_bounds,
         ..MatchDiagnostics::default()
     }
-}
-
-fn match_with_role_indexing_and_policy_with_constraint_group<
-    R: RoleIndexedRecord,
-    S: SelectionStrategy<R> + Clone + Send + Sync,
-    P: RiskSetPolicy<R>,
-    G: ConstraintGroup<R> + ?Sized,
->(
-    cohort: &[R],
-    criteria: &MatchingCriteria,
-    age_limit_years: u8,
-    ratio_fallback: &[MatchRatio],
-    strategy: S,
-    extra_constraints: &G,
-    risk_set_policy: &P,
-) -> MatchOutcome {
-    let date_distance = DateDistance;
-    match_with_role_indexing_with_channel_internal(
-        cohort,
-        strategy,
-        &RoleIndexingConfig {
-            criteria,
-            age_limit_years,
-            ratio_fallback,
-            extra_constraints,
-            distance_channel: DistanceChannel::new(
-                &date_distance,
-                criteria.typed_birth_date_caliper(),
-            ),
-            use_birth_date_index: true,
-            common_support_scores: None,
-            risk_set_policy,
-        },
-    )
 }
 
 fn match_with_role_indexing_with_channel_internal<
