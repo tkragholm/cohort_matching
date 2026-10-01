@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-01
+
+### Changed
+- The Mahalanobis distance runs faer's own product into stack buffers instead
+  of allocating for every pair, about half the instructions, with the same
+  bits.
+- Constraint exclusions are counted once per candidate pool rather than once
+  per candidate. A transition match does about 40% less work.
+- `estimation.rs` and `types/core.rs` are split into modules, and the
+  `DistanceConfig` dispatch is built in one place. The public API is
+  unchanged.
+
+Matched sets, their order and every diagnostic are byte-identical to 0.5.0.
+
 ## [0.5.0] - 2026-09-04
 
 ### Added
