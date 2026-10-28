@@ -67,7 +67,9 @@ macro_rules! impl_with_distance_config {
 }
 
 /// Generates a full `MatchingRecord` impl that delegates every method to an
-/// inner field.  Used in test fixtures that wrap a `BaseRecord` or
+/// inner field. A method added to `MatchingRecord` must be added here too:
+/// `matching::records::tests::delegate_macro_forwards_every_trait_method`
+/// fails until it is.  Used in test fixtures that wrap a `BaseRecord` or
 /// `RoleTransitionRecord<BaseRecord>` to avoid repeating identical 3-line
 /// getter bodies.
 ///
@@ -89,11 +91,17 @@ macro_rules! delegate_matching_record {
         fn strata(&self) -> &std::collections::HashMap<String, String> {
             self.$field.strata()
         }
+        fn numeric(&self, name: &str) -> Option<f64> {
+            self.$field.numeric(name)
+        }
         fn unique_key(&self) -> Option<&str> {
             self.$field.unique_key()
         }
         fn death_date(&self) -> Option<chrono::NaiveDate> {
             self.$field.death_date()
+        }
+        fn emigration_date(&self) -> Option<chrono::NaiveDate> {
+            self.$field.emigration_date()
         }
     };
 }

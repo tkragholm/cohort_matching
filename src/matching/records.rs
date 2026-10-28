@@ -176,3 +176,146 @@ impl<R: CovariateRecord> CovariateRecord for RoleTransitionRecord<R> {
         self.record.covariates()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constraints::caliper_on_field;
+    use crate::test_utils::date;
+    use crate::{MatchJob, MatchRatio};
+    use std::collections::BTreeSet;
+
+    struct Wrapper<R> {
+        inner: R,
+    }
+
+    impl<R: MatchingRecord> MatchingRecord for Wrapper<R> {
+        crate::delegate_matching_record!(inner);
+    }
+
+    impl<R: MatchingRecord> RoleIndexedRecord for Wrapper<RoleTransitionRecord<R>> {
+        fn event_date(&self) -> Option<NaiveDate> {
+            self.inner.transition_date
+        }
+    }
+
+    impl<R: MatchingRecord> ResidentAtIndexRecord for Wrapper<RoleTransitionRecord<R>> {
+        fn is_resident_at(&self, index_date: NaiveDate) -> bool {
+            self.emigration_date()
+                .is_none_or(|emigration| emigration > index_date)
+        }
+    }
+
+    /// Names of the `fn` items declared between the first `{` after `start`
+    /// and the matching closing brace at column zero or four.
+    fn fn_names(source: &str, start: &str, end: &str) -> BTreeSet<String> {
+        let from = source.find(start).expect("block start present");
+        let body = &source[from..];
+        let to = body.find(end).expect("block end present");
+        body[..to]
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim_start();
+                let rest = line.strip_prefix("fn ")?;
+                let name = rest.split(['(', '<']).next()?;
+                Some(name.to_owned())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn delegate_macro_forwards_every_trait_method() {
+        let trait_fns = fn_names(
+            include_str!("records.rs"),
+            "pub trait MatchingRecord",
+            "pub trait RoleIndexedRecord",
+        );
+        let macro_fns = fn_names(
+            include_str!("../lib.rs"),
+            "macro_rules! delegate_matching_record",
+            "mod balance;",
+        );
+        assert!(!trait_fns.is_empty());
+        assert_eq!(trait_fns, macro_fns);
+    }
+
+    #[test]
+    fn wrapper_returns_what_its_inner_record_returns() {
+        let inner = BaseRecord::new("r1", date(2010, 3, 4))
+            .with_numeric("mother_birth_year", 1980.0)
+            .with_death_date(date(2030, 1, 1))
+            .with_emigration_date(date(2025, 6, 1));
+        let mut inner = inner;
+        inner.strata.insert("sex".to_owned(), "F".to_owned());
+        inner.unique_key = Some("family".to_owned());
+        let wrapped = Wrapper {
+            inner: inner.clone(),
+        };
+
+        assert_eq!(wrapped.id(), inner.id());
+        assert_eq!(wrapped.birth_date(), inner.birth_date());
+        assert_eq!(wrapped.strata(), inner.strata());
+        assert_eq!(wrapped.unique_key(), Some("family"));
+        assert_eq!(wrapped.death_date(), Some(date(2030, 1, 1)));
+        assert_eq!(wrapped.emigration_date(), Some(date(2025, 6, 1)));
+        assert_eq!(wrapped.numeric("mother_birth_year"), Some(1980.0));
+        assert_eq!(wrapped.numeric("absent"), None);
+    }
+
+    fn base(id: &str, mother: f64, emigrated: Option<NaiveDate>) -> BaseRecord {
+        let record =
+            BaseRecord::new(id, date(2010, 1, 1)).with_numeric("mother_birth_year", mother);
+        match emigrated {
+            Some(day) => record.with_emigration_date(day),
+            None => record,
+        }
+    }
+
+    #[test]
+    fn matching_run_is_the_same_for_wrapper_and_inner_record() {
+        let rows = [
+            ("case", 1980.0, None, Some(date(2012, 1, 1))),
+            ("far", 1996.0, None, None),
+            ("gone", 1980.2, Some(date(2011, 1, 1)), None),
+            ("near", 1980.5, Some(date(2015, 1, 1)), None),
+        ];
+        let inner: Vec<_> = rows
+            .iter()
+            .map(|&(id, mother, emigrated, transition)| {
+                RoleTransitionRecord::from_record(base(id, mother, emigrated), transition)
+            })
+            .collect();
+        let wrapped: Vec<_> = rows
+            .iter()
+            .map(|&(id, mother, emigrated, transition)| Wrapper {
+                inner: RoleTransitionRecord::from_record(base(id, mother, emigrated), transition),
+            })
+            .collect();
+
+        let ratio = MatchRatio::new(1).expect("non-zero ratio");
+        let direct = MatchJob::new_transition(&inner, 42)
+            .with_ratio(ratio)
+            .with_constraints(vec![caliper_on_field("mother_birth_year", 1.0)])
+            .with_resident_check()
+            .run();
+        let through_macro = MatchJob::new_transition(&wrapped, 42)
+            .with_ratio(ratio)
+            .with_constraints(vec![caliper_on_field("mother_birth_year", 1.0)])
+            .with_resident_check()
+            .run();
+
+        assert_eq!(direct.pairs.len(), 1);
+        assert_eq!(direct.pairs[0].control_id, "near");
+        assert_eq!(through_macro.pairs.len(), direct.pairs.len());
+        assert_eq!(
+            through_macro.pairs[0].anchor_id(),
+            direct.pairs[0].anchor_id()
+        );
+        assert_eq!(
+            through_macro.pairs[0].comparator_id(),
+            direct.pairs[0].comparator_id()
+        );
+        assert_eq!(through_macro.matched_cases, direct.matched_cases);
+        assert_eq!(through_macro.unmatched_cases, direct.unmatched_cases);
+    }
+}

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `delegate_matching_record!` forwards `numeric` and `emigration_date` to the
+  inner record. A wrapper built with the macro used to return `None` for both,
+  so a `Caliper` on a named field refused every pair and the emigration-based
+  residency rule treated everyone as resident. The macro syntax is unchanged.
+  A unit test compares the methods of `MatchingRecord` with those the macro
+  forwards, so a method added to the trait fails the test until the macro
+  forwards it.
+
 ## [0.5.2] - 2026-10-28
 
 ### Changed
