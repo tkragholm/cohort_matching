@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-28
+
+### Changed
+- The strata index interns strata values to integers when it is built, so a
+  lookup no longer allocates and hashes a vector of strings, and the strata of
+  each control are read once rather than twice.
+- A candidate pool drawn from the strata index skips the exact-match check,
+  which the index has already settled.
+- A pool is ordered by the first eight bytes of the ids, and the ids are only
+  compared when those agree.
+- A uniqueness value is copied into the interner the first time it is seen
+  rather than on every selection.
+- At 400,000 people and 30,000 cases the two-pass transition match in
+  `benches/transition_strata.rs` takes about a quarter less time.
+  The public API is unchanged.
+
+Matched sets, their order and every diagnostic are byte-identical to 0.5.1,
+which `tests/golden.rs` pins.
+
 ## [0.5.1] - 2026-10-01
 
 ### Changed
