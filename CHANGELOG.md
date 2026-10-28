@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-10-29
+
 ### Fixed
 - `delegate_matching_record!` forwards `numeric` and `emigration_date` to the
   inner record. A wrapper built with the macro used to return `None` for both,
