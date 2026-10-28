@@ -4,7 +4,7 @@ use super::constraints::{
     build_strata_values, unique_value,
 };
 use super::distance::{DateDistance, DistanceChannel, DistanceConfig, DistanceMetric};
-use super::index::CandidateIndex;
+use super::index::{CandidateIndex, StrataValues};
 use super::ratio::RatioPolicy;
 use super::records::MatchingRecord;
 use super::selection::SelectionStrategy;
@@ -14,7 +14,6 @@ use crate::types::{
     MatchDiagnostics, MatchOutcome, MatchRatio, MatchedPair, MatchingCriteria, UniqueValueId,
 };
 use rapidhash::RapidHashMap;
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 fn initial_diagnostics(
@@ -126,7 +125,7 @@ impl<'a, S, G: ?Sized> StandardMatchRequest<'a, S, G> {
 }
 
 use rayon::prelude::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Internal candidate-pool request used by role-transition and engine helpers.
 #[derive(Clone, Copy)]
@@ -201,17 +200,19 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
     /// Construct a reusable engine for a fixed control pool and criteria.
     #[must_use]
     pub fn new(controls: &'a [R], criteria: &'a MatchingCriteria, selector: S) -> Self {
-        let control_strata_values = precompute_strata_values(controls, &criteria.required_strata);
+        let strata_values = StrataValues::of_controls(controls, &criteria.required_strata);
+        let candidate_index =
+            CandidateIndex::from_values(controls, &criteria.required_strata, &strata_values);
         let precomputed = MatchingPrecomputed {
             criteria,
-            control_strata_values,
+            control_strata_values: (!criteria.required_strata.is_empty()).then_some(strata_values),
         };
 
         Self {
             controls,
             criteria,
             precomputed,
-            candidate_index: CandidateIndex::new(controls, &criteria.required_strata),
+            candidate_index,
             selector,
         }
     }
@@ -308,12 +309,25 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
         let no_self_match_constraint = NoSelfMatchConstraint;
         let strata_constraint = ExactMatchConstraint;
         let unique_constraint = UniqueKeyConstraint;
-        let builtin_constraints: [&dyn Constraint<R>; 4] = [
+        let all_builtin: [&dyn Constraint<R>; 4] = [
             &replacement_constraint,
             &no_self_match_constraint,
             &strata_constraint,
             &unique_constraint,
         ];
+        let indexed_builtin: [&dyn Constraint<R>; 3] = [
+            &replacement_constraint,
+            &no_self_match_constraint,
+            &unique_constraint,
+        ];
+        // Every candidate the strata index returns has the case's value for each
+        // required stratum, so the exact-match constraint cannot block it.
+        let builtin_constraints: &[&dyn Constraint<R>] =
+            if pool_config.use_birth_date_index && case_strata_values.is_some() {
+                &indexed_builtin
+            } else {
+                &all_builtin
+            };
         let caliper_constraint = pool_config.distance_caliper.map(|max_distance| {
             CaliperConstraint::new(
                 pool_config.distance_metric,
@@ -340,8 +354,8 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
             let control_strata_values = self
                 .precomputed
                 .control_strata_values
-                .as_deref()
-                .and_then(|values| values.get(idx).map(Vec::as_slice));
+                .as_ref()
+                .and_then(|values| values.row(idx));
             let context = ConstraintContext {
                 criteria: self.precomputed.criteria,
                 used_controls: pool_config.used_controls,
@@ -355,7 +369,7 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
             if let Some(reason) = first_blocking_constraint_reason(
                 case,
                 control,
-                &builtin_constraints,
+                builtin_constraints,
                 caliper_constraint.as_ref(),
                 extra_constraints,
                 &context,
@@ -396,7 +410,7 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
         // the stable control IDENTITY (person id) makes the pool order reproducible
         // regardless of the array order (and gives a stable tie-break for
         // distance-based selection) without changing which candidates are eligible.
-        eligible.sort_unstable_by(|&a, &b| self.controls[a].id().cmp(self.controls[b].id()));
+        sort_by_id(self.controls, &mut eligible);
         eligible
     }
 
@@ -520,11 +534,7 @@ impl<'a, R: MatchingRecord + Sync, S: SelectionStrategy<R> + Clone + Send + Sync
                             used_controls.insert(selected);
                         }
                         if let Some(value) = unique_value(control, self.criteria) {
-                            let next_id = unique_interner.len();
-                            let id = *unique_interner
-                                .entry(value.to_string())
-                                .or_insert_with(|| UniqueValueId::new(next_id));
-                            used_unique.insert(id);
+                            used_unique.insert(intern_unique(&mut unique_interner, value));
                         }
                     }
                     if local_matches > 0 {
@@ -768,7 +778,7 @@ fn group_anchors_by_strata<R: MatchingRecord>(
     // for `Vec<Option<String>>`, it costs one extra map lookup, and it makes the
     // output order a function of the INPUT order -- which the caller controls and can
     // therefore make canonical.
-    let mut index_of: HashMap<Vec<Option<String>>, usize> = HashMap::new();
+    let mut index_of: FxHashMap<Vec<Option<&str>>, usize> = FxHashMap::default();
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for (anchor_idx, case) in anchors.iter().enumerate() {
         if trimmed_indices
@@ -777,9 +787,9 @@ fn group_anchors_by_strata<R: MatchingRecord>(
         {
             continue;
         }
-        let key: Vec<Option<String>> = required_strata
+        let key: Vec<Option<&str>> = required_strata
             .iter()
-            .map(|k| case.strata().get(k).cloned())
+            .map(|k| case.strata().get(k).map(String::as_str))
             .collect();
         match index_of.get(&key) {
             Some(&position) => groups[position].push(anchor_idx),
@@ -792,24 +802,49 @@ fn group_anchors_by_strata<R: MatchingRecord>(
     groups
 }
 
-pub struct MatchingPrecomputed<'a> {
-    pub criteria: &'a MatchingCriteria,
-    pub control_strata_values: Option<Vec<Vec<Option<&'a str>>>>,
+/// The id of a uniqueness value, numbered in order of first use.
+pub(crate) fn intern_unique(
+    interner: &mut RapidHashMap<String, UniqueValueId>,
+    value: &str,
+) -> UniqueValueId {
+    if let Some(id) = interner.get(value) {
+        return *id;
+    }
+    let id = UniqueValueId::new(interner.len());
+    interner.insert(value.to_string(), id);
+    id
 }
 
-fn precompute_strata_values<'a, R: MatchingRecord>(
-    controls: &'a [R],
-    strata_keys: &[String],
-) -> Option<Vec<Vec<Option<&'a str>>>> {
-    if strata_keys.is_empty() {
-        return None;
-    }
-    Some(
-        controls
-            .iter()
-            .map(|c| build_strata_values(c.strata(), strata_keys))
-            .collect(),
-    )
+/// The first eight bytes of an id, zero-padded, as a big-endian integer.
+///
+/// For two ids, the order of these integers is the order of the ids whenever
+/// the integers differ, so a comparison only reads the ids when they agree.
+fn id_prefix(id: &str) -> u64 {
+    let bytes = id.as_bytes();
+    let mut word = [0_u8; 8];
+    let len = bytes.len().min(8);
+    word[..len].copy_from_slice(&bytes[..len]);
+    u64::from_be_bytes(word)
+}
+
+/// Sort control indices by the id of the control, as `str::cmp` orders them.
+fn sort_by_id<R: MatchingRecord>(controls: &[R], indices: &mut Vec<usize>) {
+    let mut keyed: Vec<(u64, usize)> = indices
+        .iter()
+        .map(|&idx| (id_prefix(controls[idx].id()), idx))
+        .collect();
+    keyed.sort_unstable_by(|&(left_prefix, left), &(right_prefix, right)| {
+        left_prefix
+            .cmp(&right_prefix)
+            .then_with(|| controls[left].id().cmp(controls[right].id()))
+    });
+    indices.clear();
+    indices.extend(keyed.into_iter().map(|(_, idx)| idx));
+}
+
+pub struct MatchingPrecomputed<'a> {
+    pub criteria: &'a MatchingCriteria,
+    pub(crate) control_strata_values: Option<StrataValues<'a>>,
 }
 
 pub fn build_outcome(
@@ -939,5 +974,69 @@ mod strata_group_order_tests {
             vec![vec![0, 4], vec![1, 3, 6], vec![2, 5]],
             "groups must follow first appearance (b, a, c), each keeping anchor order"
         );
+    }
+}
+
+#[cfg(test)]
+mod id_order_tests {
+    use super::{id_prefix, intern_unique, sort_by_id};
+    use crate::types::BaseRecord;
+    use chrono::NaiveDate;
+    use rapidhash::RapidHashMap;
+
+    fn records(ids: &[&str]) -> Vec<BaseRecord> {
+        let date = NaiveDate::from_ymd_opt(2010, 1, 1).expect("valid date");
+        ids.iter().map(|id| BaseRecord::new(*id, date)).collect()
+    }
+
+    /// The prefix order agrees with `str` order wherever the prefixes differ,
+    /// and the sort agrees with `str` order everywhere.
+    #[test]
+    fn sorting_by_prefix_then_id_is_sorting_by_id() {
+        let ids = [
+            "",
+            "a",
+            "a\0",
+            "a\0\0",
+            "ab",
+            "abcdefgh",
+            "abcdefgh0",
+            "abcdefgh1",
+            "abcdefgi",
+            "abcdefg",
+            "b",
+            "0000000001",
+            "0000000002",
+            "00000000011",
+            "\u{e5}",
+            "z",
+            "zz",
+            "abcdefgh\0",
+            "abcdefg\0h",
+        ];
+        for (left, right) in ids.iter().flat_map(|l| ids.iter().map(move |r| (l, r))) {
+            let (lp, rp) = (id_prefix(left), id_prefix(right));
+            if lp != rp {
+                assert_eq!(lp.cmp(&rp), left.cmp(right), "{left:?} vs {right:?}");
+            }
+        }
+        let controls = records(&ids);
+        let mut indices: Vec<usize> = (0..ids.len()).rev().collect();
+        sort_by_id(&controls, &mut indices);
+        let sorted: Vec<&str> = indices.iter().map(|&i| ids[i]).collect();
+        let mut expected = ids.to_vec();
+        expected.sort_unstable();
+        assert_eq!(sorted, expected);
+    }
+
+    #[test]
+    fn unique_values_are_numbered_in_order_of_first_use() {
+        let mut interner = RapidHashMap::default();
+        let first = intern_unique(&mut interner, "f1");
+        let second = intern_unique(&mut interner, "f2");
+        assert_ne!(first, second);
+        assert_eq!(intern_unique(&mut interner, "f1"), first);
+        assert_eq!(intern_unique(&mut interner, "f2"), second);
+        assert_eq!(interner.len(), 2);
     }
 }

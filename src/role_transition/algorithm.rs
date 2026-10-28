@@ -1,7 +1,7 @@
 use crate::matching::{
     CandidatePoolRequest, ConstraintGroup, DateDistance, DistanceChannel, DistanceConfig,
     DistanceMetric, MatchEngine, RoleIndexedRecord, SelectionStrategy, UsedControlsVec,
-    build_outcome, finalize_estimand_diagnostics, invalid_common_support_outcome,
+    build_outcome, finalize_estimand_diagnostics, intern_unique, invalid_common_support_outcome,
     invalid_criteria_outcome, ratio::RatioPolicy, unique_value,
 };
 use crate::types::{
@@ -505,11 +505,7 @@ fn run_transition_case_loop<
                 state.used_controls.insert(selected_idx);
             }
             if let Some(value) = unique_value(control, loop_config.validated) {
-                let next_id = state.unique_interner.len();
-                let id = *state
-                    .unique_interner
-                    .entry(value.to_string())
-                    .or_insert_with(|| UniqueValueId::new(next_id));
+                let id = intern_unique(&mut state.unique_interner, value);
                 state.used_unique.insert(id);
             }
         }

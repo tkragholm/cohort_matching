@@ -49,3 +49,7 @@ required-features = ["test-utils"]
 name = "balance_stats"
 harness = false
 required-features = ["bench-internals", "test-utils"]
+
+[[bench]]
+name = "transition_strata"
+harness = false
