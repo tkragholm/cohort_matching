@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `RandomSelection` draws from the SplitMix64 generator of `epistat-rng`
+  instead of ChaCha8. `RandomSelection::seeded` and the `MatchJob` seed keep
+  their signatures, but the same seed now gives different matched sets than
+  0.5.4. Matching with `NearestBirthDateSelection` or `DeterministicSelection`
+  is unchanged. The `rand` and `rand_chacha` dependencies are removed.
+- Propensity and Mahalanobis estimation solve and invert through
+  `epistat-linalg` (partial-pivot LU, faer) instead of a hand-written Gaussian
+  elimination. The retry schedule is the same: a pivot of at most 1e-14 counts
+  as singular, and the ridge starts at 1e-8 and grows tenfold. Estimates for
+  well-conditioned designs agree with 0.5.4 to rounding. For near-collinear
+  designs, where the pivot is rounding noise, estimates can differ. The
+  `EstimationError` variants are unchanged.
+
 ## [0.5.4] - 2026-11-19
 
 ### Changed

@@ -1,91 +1,48 @@
 //! Dense solves and inversions, with a ridge added when the system is singular.
 
 use super::EstimationError;
-use itertools::Itertools;
+use epistat_linalg::{Attempt, Method, Ridge, inverse, solve};
+use faer::{Mat, MatRef};
 
+/// A pivot at most this in absolute value makes a factorisation count as failed.
+const MIN_PIVOT: f64 = 1e-14;
+
+/// First ridge of the escalation: later ridges grow tenfold each.
+const FIRST_RIDGE: f64 = 1e-8;
+
+/// Solves `matrix x = rhs` for a row-major square `matrix`: once as given, then
+/// with a ridge of 1e-8 added to the diagonal, growing tenfold, seven times.
 pub(super) fn solve_with_ridge_retry(
     matrix: &[f64],
     rhs: &[f64],
     dimension: usize,
 ) -> Result<Vec<f64>, EstimationError> {
-    let mut ridge = 0.0_f64;
-    for attempt in 0..8 {
-        let mut adjusted = matrix.to_vec();
-        if attempt > 0 {
-            ridge = if ridge == 0.0 { 1e-8 } else { ridge * 10.0 };
-            for idx in 0..dimension {
-                adjusted[idx * dimension + idx] += ridge;
-            }
-        }
-        if let Some(solution) = solve_linear_system(&adjusted, rhs, dimension) {
-            return Ok(solution);
-        }
-    }
-    Err(EstimationError::LinearSystemSolveFailed)
-}
-
-fn solve_linear_system(matrix: &[f64], rhs: &[f64], dimension: usize) -> Option<Vec<f64>> {
     if matrix.len() != dimension.saturating_mul(dimension) || rhs.len() != dimension {
-        return None;
+        return Err(EstimationError::LinearSystemSolveFailed);
     }
     if dimension == 0 {
-        return Some(Vec::new());
+        return Ok(Vec::new());
     }
-
-    let width = dimension + 1;
-    let mut augmented = vec![0.0_f64; dimension * width];
-    for row in 0..dimension {
-        for col in 0..dimension {
-            augmented[row * width + col] = matrix[row * dimension + col];
-        }
-        augmented[row * width + dimension] = rhs[row];
-    }
-
-    for pivot in 0..dimension {
-        let mut pivot_row = pivot;
-        let mut pivot_abs = augmented[pivot * width + pivot].abs();
-        for row in (pivot + 1)..dimension {
-            let candidate = augmented[row * width + pivot].abs();
-            if candidate > pivot_abs {
-                pivot_abs = candidate;
-                pivot_row = row;
-            }
-        }
-        if pivot_abs <= 1e-14 {
-            return None;
-        }
-        if pivot_row != pivot {
-            for col in 0..width {
-                augmented.swap(pivot * width + col, pivot_row * width + col);
-            }
-        }
-
-        let pivot_value = augmented[pivot * width + pivot];
-        for col in pivot..width {
-            augmented[pivot * width + col] /= pivot_value;
-        }
-
-        for row in 0..dimension {
-            if row == pivot {
-                continue;
-            }
-            let factor = augmented[row * width + pivot];
-            if factor.abs() <= 1e-18 {
-                continue;
-            }
-            for col in pivot..width {
-                augmented[row * width + col] -= factor * augmented[pivot * width + col];
-            }
-        }
-    }
-
-    Some(
-        (0..dimension)
-            .map(|row| augmented[row * width + dimension])
-            .collect_vec(),
+    let attempt = Attempt::ridged(
+        Method::PartialPivLu,
+        Ridge {
+            start: FIRST_RIDGE,
+            growth: 10.0,
+            tries: 7,
+        },
     )
+    .with_min_pivot(MIN_PIVOT);
+    let a = MatRef::from_row_major_slice(matrix, dimension, dimension);
+    let b = MatRef::from_column_major_slice(rhs, dimension, 1);
+    let solution = solve(a, b, &[attempt]).map_err(|_| EstimationError::LinearSystemSolveFailed)?;
+    Ok((0..dimension).map(|row| solution.x[(row, 0)]).collect())
 }
 
+/// Inverts a row-major square `matrix` after adding `ridge` to the diagonal.
+///
+/// Up to `max_attempts` inversions are tried (at least one). A positive `ridge`
+/// is added from the first try and grows tenfold after each failure. A ridge of
+/// zero gives a plain inversion first, then 1e-8, growing tenfold.
 pub(super) fn invert_matrix_with_ridge(
     matrix: &[f64],
     ridge: f64,
@@ -96,92 +53,53 @@ pub(super) fn invert_matrix_with_ridge(
         return Err(EstimationError::InvalidCovarianceMatrix);
     }
 
-    let mut current_ridge = ridge.max(0.0);
-    for attempt in 0..max_attempts.max(1) {
-        let mut adjusted = matrix.to_vec();
-        if current_ridge > 0.0 {
+    let attempts = max_attempts.max(1);
+    let start = ridge.max(0.0);
+    let a = MatRef::from_row_major_slice(matrix, dimension, dimension);
+    if start > 0.0 {
+        let plain = [Attempt::plain(Method::PartialPivLu).with_min_pivot(MIN_PIVOT)];
+        let mut current = start;
+        for _ in 0..attempts {
+            let mut adjusted = a.to_owned();
             for idx in 0..dimension {
-                adjusted[idx * dimension + idx] += current_ridge;
+                adjusted[(idx, idx)] += current;
             }
+            if let Ok(solution) = inverse(adjusted.as_ref(), &plain) {
+                return Ok(row_major(&solution.x, dimension));
+            }
+            current *= 10.0;
         }
-        if let Some(inverse) = invert_matrix(&adjusted, dimension) {
-            return Ok(inverse);
-        }
-        if attempt == 0 && current_ridge == 0.0 {
-            current_ridge = 1e-8;
-        } else {
-            current_ridge *= 10.0;
-        }
+        return Err(EstimationError::InvalidCovarianceMatrix);
     }
 
-    Err(EstimationError::InvalidCovarianceMatrix)
+    let tries = u32::try_from(attempts - 1).unwrap_or(u32::MAX);
+    let attempt = Attempt::ridged(
+        Method::PartialPivLu,
+        Ridge {
+            start: FIRST_RIDGE,
+            growth: 10.0,
+            tries,
+        },
+    )
+    .with_min_pivot(MIN_PIVOT);
+    inverse(a, &[attempt])
+        .map(|solution| row_major(&solution.x, dimension))
+        .map_err(|_| EstimationError::InvalidCovarianceMatrix)
 }
 
-fn invert_matrix(matrix: &[f64], dimension: usize) -> Option<Vec<f64>> {
-    if matrix.len() != dimension.saturating_mul(dimension) {
-        return None;
-    }
-
-    let width = dimension * 2;
-    let mut augmented = vec![0.0_f64; dimension * width];
+fn row_major(matrix: &Mat<f64>, dimension: usize) -> Vec<f64> {
+    let mut out = Vec::with_capacity(dimension * dimension);
     for row in 0..dimension {
         for col in 0..dimension {
-            augmented[row * width + col] = matrix[row * dimension + col];
-        }
-        augmented[row * width + dimension + row] = 1.0;
-    }
-
-    for pivot in 0..dimension {
-        let mut pivot_row = pivot;
-        let mut pivot_abs = augmented[pivot * width + pivot].abs();
-        for row in (pivot + 1)..dimension {
-            let candidate = augmented[row * width + pivot].abs();
-            if candidate > pivot_abs {
-                pivot_abs = candidate;
-                pivot_row = row;
-            }
-        }
-        if pivot_abs <= 1e-14 {
-            return None;
-        }
-        if pivot_row != pivot {
-            for col in 0..width {
-                augmented.swap(pivot * width + col, pivot_row * width + col);
-            }
-        }
-
-        let pivot_value = augmented[pivot * width + pivot];
-        for col in 0..width {
-            augmented[pivot * width + col] /= pivot_value;
-        }
-
-        for row in 0..dimension {
-            if row == pivot {
-                continue;
-            }
-            let factor = augmented[row * width + pivot];
-            if factor.abs() <= 1e-18 {
-                continue;
-            }
-            for col in 0..width {
-                augmented[row * width + col] -= factor * augmented[pivot * width + col];
-            }
+            out.push(matrix[(row, col)]);
         }
     }
-
-    let mut inverse = vec![0.0_f64; dimension * dimension];
-    for row in 0..dimension {
-        for col in 0..dimension {
-            inverse[row * dimension + col] = augmented[row * width + dimension + col];
-        }
-    }
-    Some(inverse)
+    out
 }
 
 fn to_dimension(length: usize) -> Option<usize> {
     // The side of the square this flattened matrix is, or None if it is not
-    // square. Was a linear search upward for the root; `isqrt` is the same
-    // answer, including for 0.
+    // square.
     let root = length.isqrt();
     (root * root == length).then_some(root)
 }

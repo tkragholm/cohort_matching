@@ -1,6 +1,5 @@
 use super::records::MatchingRecord;
-use rand::prelude::*;
-use rand_chacha::ChaCha8Rng;
+use epistat_rng::Stream;
 
 /// Strategy for selecting one control from a candidate index set.
 pub trait SelectionStrategy<R: MatchingRecord> {
@@ -16,14 +15,14 @@ pub trait SelectionStrategy<R: MatchingRecord> {
 /// Random control selection using a reproducible RNG seed.
 #[derive(Clone)]
 pub struct RandomSelection {
-    rng: ChaCha8Rng,
+    rng: Stream,
 }
 
 impl RandomSelection {
     #[must_use]
     pub fn seeded(seed: u64) -> Self {
         Self {
-            rng: ChaCha8Rng::seed_from_u64(seed),
+            rng: Stream::seeded(seed),
         }
     }
 }
@@ -38,7 +37,7 @@ impl<R: MatchingRecord> SelectionStrategy<R> for RandomSelection {
         if candidate_indices.is_empty() {
             None
         } else {
-            Some(self.rng.random_range(0..candidate_indices.len()))
+            Some(self.rng.below(candidate_indices.len()))
         }
     }
 }

@@ -253,17 +253,17 @@ fn hash_is_sensitive_to_order() {
     let _: HashMap<u8, NaiveDate> = HashMap::new();
 }
 
-const E_TP_PASS1: (u64, u64) = (0x63f4b43829ef2f07, 0xba2d20b850211f2b);
-const E_TP_PASS2: (u64, u64) = (0x12e30a49de49df54, 0x9c388a3ffb90ed91);
-const E_TPC_PASS1: (u64, u64) = (0x7c87c38a1205f328, 0xabba74f8048e91ac);
-const E_TPC_PASS2: (u64, u64) = (0xb9f5e4200994a7fe, 0x1e44c4a02f2fe9c8);
-const E_SPARSE_PASS1: (u64, u64) = (0x3d0802c359c3ad3b, 0x8d6598c02353c98a);
-const E_SPARSE_PASS2: (u64, u64) = (0x30151d03d11a1dc4, 0xb02aaddd03c1b311);
+const E_TP_PASS1: (u64, u64) = (0xee31aaebf1bb5c12, 0xdd3cae180802aa97);
+const E_TP_PASS2: (u64, u64) = (0xc717387d1ac33158, 0x5b75e8704106f046);
+const E_TPC_PASS1: (u64, u64) = (0x7e96b6aef084d994, 0x5f8f31fa3dec24a2);
+const E_TPC_PASS2: (u64, u64) = (0x716210bb04273b15, 0xe45d7368193b77b4);
+const E_SPARSE_PASS1: (u64, u64) = (0x491c79dd6ad46c85, 0x575f103ff72776a8);
+const E_SPARSE_PASS2: (u64, u64) = (0x540e91d20bf2fbb6, 0x823bcd921dd1d19f);
 const E_NEAREST: (u64, u64) = (0x959f7432847ef008, 0x585c1833c1e022cf);
-const E_UNIQUE_FAMILY: (u64, u64) = (0xba373c07d1999ccf, 0x5bf2edc754923f1f);
-const E_NO_STRATA: (u64, u64) = (0x9f2d9e72ec6062ed, 0xb3af339dd86f2543);
-const E_MISSING_KEY: (u64, u64) = (0x4ba905545e7cefcb, 0x49b20c1163143340);
-const E_STD_NOREPL: (u64, u64) = (0x8f2cdd879d49d7d4, 0x98f0339e11d9ad0e);
-const E_STD_REPL: (u64, u64) = (0x9fd9853ccfe82116, 0x9e3273668b942a2e);
-const E_STD_UNIQUE: (u64, u64) = (0xeea7887eb73ad616, 0xa262ee78f0e2c5db);
+const E_UNIQUE_FAMILY: (u64, u64) = (0x65b45674334aeb7e, 0x9e58c677dd7580ca);
+const E_NO_STRATA: (u64, u64) = (0x3ccfb32824266e76, 0x1107c990cf13157d);
+const E_MISSING_KEY: (u64, u64) = (0xc2b13bb16547f35a, 0x03f832b6063ce40b);
+const E_STD_NOREPL: (u64, u64) = (0x54babf39ce9e9dba, 0x7e322fddce9b9854);
+const E_STD_REPL: (u64, u64) = (0x4cc9dcc57250d16d, 0x45fb7072aa50bd57);
+const E_STD_UNIQUE: (u64, u64) = (0xd90cf67cee081244, 0x0ad234b2f7937bb0);
 const E_STD_NOSTRATA: (u64, u64) = (0xfbe1e86e4ad4936d, 0x1a8b1221f7c395a3);
