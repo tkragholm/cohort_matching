@@ -1,6 +1,6 @@
 [package]
 name = "cohort_matching"
-version = "0.5.4"
+version = "0.6.0"
 edition = "2024"
 authors = ["Tobias Kragholm"]
 license = "MIT OR Apache-2.0"
@@ -30,9 +30,9 @@ ordered-float = "5"
 chrono = { version = "0.4", features = ["serde"] }
 faer = { version = "0.24", default-features = false, features = ["std", "rayon", "nightly"] }
 itertools = "0.14"
-epistat-stats = { git = "https://github.com/tkragholm/epistat", rev = "b75e20cc612d8556323cbcb46362fd8f8cbc12b0" }
-epistat-linalg = { git = "https://github.com/tkragholm/epistat", rev = "b75e20cc612d8556323cbcb46362fd8f8cbc12b0" }
-epistat-rng = { git = "https://github.com/tkragholm/epistat", rev = "b75e20cc612d8556323cbcb46362fd8f8cbc12b0" }
+epistat-stats = "0.1.1"
+epistat-linalg = "0.2.0"
+epistat-rng = "0.1.1"
 serde = { version = "1.0.228", features = ["derive"] }
 
 [dev-dependencies]
