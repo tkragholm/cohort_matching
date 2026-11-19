@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-11-19
+
+### Changed
+
+- The balance statistics (standardised mean differences, variance ratio, eCDF
+  and eQQ distances, Cramér's V) are computed by `epistat-stats`. Undefined
+  statistics still report 0. The eQQ grid uses R's type 7 interpolation, so
+  balance statistics can differ from 0.5.3 in the last bits; matched sets are
+  unchanged.
+
 ## [0.5.3] - 2026-10-29
 
 ### Fixed
