@@ -1,9 +1,9 @@
 //! Logistic propensity models: IRLS with a ridge penalty, and elastic net by proximal gradient.
 
-use super::EstimationError;
 use super::config::{ElasticNetLogisticConfig, LogisticRegressionConfig};
 use super::encoding::CovariateMatrix;
-use super::linalg::solve_with_ridge_retry;
+use super::linalg::{is_singular, solve_with_ridge_retry};
+use super::{EstimationError, RidgeReport};
 use crate::matching::to_f64;
 
 #[derive(Debug, Clone)]
@@ -13,6 +13,8 @@ pub(super) struct LogisticFit {
     pub(super) probabilities: Vec<f64>,
     pub(super) converged: bool,
     pub(super) iterations: usize,
+    /// The ridge of the linear solves; `None` for the elastic net, which solves none.
+    pub(super) ridge: Option<RidgeReport>,
 }
 
 pub(super) fn fit_logistic_regression(
@@ -29,6 +31,7 @@ pub(super) fn fit_logistic_regression(
     let mut probabilities = vec![0.5_f64; matrix.n_rows];
     let mut converged = false;
     let mut iterations = 0usize;
+    let mut ridge = RidgeReport::default();
 
     for iter_idx in 0..config.max_iter {
         iterations = iter_idx + 1;
@@ -67,6 +70,10 @@ pub(super) fn fit_logistic_regression(
             }
         }
 
+        if iter_idx == 0 {
+            // At the start every weight is 1/4, so this tests the design alone.
+            ridge.singular_without_ridge = is_singular(&normal_matrix, matrix.n_cols);
+        }
         for diag in 0..matrix.n_cols {
             if matrix.column_names[diag] == "intercept" {
                 continue;
@@ -74,7 +81,10 @@ pub(super) fn fit_logistic_regression(
             normal_matrix[diag * matrix.n_cols + diag] += config.l2_penalty.max(0.0);
         }
 
-        let updated = solve_with_ridge_retry(&normal_matrix, &weighted_target, matrix.n_cols)?;
+        let (updated, added) =
+            solve_with_ridge_retry(&normal_matrix, &weighted_target, matrix.n_cols)?;
+        ridge.ridge = ridge.ridge.max(added);
+        ridge.singular_without_ridge |= added > 0.0;
         let max_delta = updated
             .iter()
             .zip(coefficients.iter())
@@ -97,6 +107,7 @@ pub(super) fn fit_logistic_regression(
     );
 
     Ok(LogisticFit {
+        ridge: Some(ridge),
         coefficients,
         linear_predictor,
         probabilities,
@@ -192,6 +203,7 @@ pub(super) fn fit_elastic_net_logistic(
     );
 
     Ok(LogisticFit {
+        ridge: None,
         coefficients,
         linear_predictor,
         probabilities,

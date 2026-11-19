@@ -70,6 +70,22 @@ impl Default for LogisticRegressionConfig {
 }
 
 /// Elastic-net logistic settings for in-crate propensity estimation.
+///
+/// The fit minimises the mean log-loss plus
+/// `lambda * (alpha * |b|_1 + (1 - alpha) / 2 * |b|_2^2)`, with the intercept
+/// unpenalised and the covariates used as given, not standardised. This is the
+/// objective of R's `glmnet(family = "binomial", standardize = FALSE)`, and the
+/// coefficients agree with it to about 1e-7 once the fit has converged
+/// (`tests/glmnet_reference.rs`). `glmnet`'s default `standardize = TRUE`
+/// penalises the standardised coefficients and gives different estimates.
+///
+/// The optimiser is a proximal gradient with one fixed step of
+/// `step_scale / (m / 4 + lambda * (1 - alpha))`, where `m` is the largest
+/// squared row norm of the design. It therefore converges slowly when a covariate
+/// has a large scale or the covariates are strongly correlated. With the
+/// defaults (500 iterations, tolerance 1e-7) it can stop before the optimum,
+/// and then [`PropensityScoreEstimate::converged`](crate::PropensityScoreEstimate::converged)
+/// is `false`. Centre and scale the covariates, or raise `max_iter`, when it is.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct ElasticNetLogisticConfig {
     /// Maximum proximal-gradient iterations.

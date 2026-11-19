@@ -28,10 +28,10 @@ pub struct ProjectedBalanceRow {
     pub covariate: String,
     /// Covariate metric type.
     pub metric_type: &'static str,
-    /// Pre-match summary metric.
-    pub smd_before: f64,
-    /// Post-match summary metric.
-    pub smd_after: f64,
+    /// Pre-match summary metric, `None` when it is undefined.
+    pub smd_before: Option<f64>,
+    /// Post-match summary metric, `None` when it is undefined.
+    pub smd_after: Option<f64>,
 }
 
 impl<R> NumericCovariateSpec<R> {
@@ -66,29 +66,26 @@ pub fn variance(vals: &[f64], mean: f64) -> f64 {
     sum_squares / to_f64(vals.len().saturating_sub(1))
 }
 
-/// Standardized mean difference from raw value vectors.
+/// Standardized mean difference from raw value vectors, `None` when a group is
+/// empty or the pooled variance is not positive and finite.
 #[must_use]
-pub fn smd_numeric_from_values(case_vals: &[f64], control_vals: &[f64]) -> f64 {
+pub fn smd_numeric_from_values(case_vals: &[f64], control_vals: &[f64]) -> Option<f64> {
     if case_vals.is_empty() || control_vals.is_empty() {
-        return 0.0;
+        return None;
     }
     let mean_case = case_vals.iter().sum::<f64>() / to_f64(case_vals.len());
     let mean_control = control_vals.iter().sum::<f64>() / to_f64(control_vals.len());
     let var_case = variance(case_vals, mean_case);
     let var_control = variance(control_vals, mean_control);
     let pooled_sd = f64::midpoint(var_case, var_control).sqrt();
-    if pooled_sd <= 0.0 || !pooled_sd.is_finite() {
-        0.0
-    } else {
-        (mean_case - mean_control) / pooled_sd
-    }
+    (pooled_sd > 0.0 && pooled_sd.is_finite()).then(|| (mean_case - mean_control) / pooled_sd)
 }
 
-/// Maximum absolute difference in category proportions.
+/// Maximum absolute difference in category proportions, `None` when a group is empty.
 #[must_use]
-pub fn categorical_max_abs_diff(case_vals: &[String], control_vals: &[String]) -> f64 {
-    if case_vals.is_empty() && control_vals.is_empty() {
-        return 0.0;
+pub fn categorical_max_abs_diff(case_vals: &[String], control_vals: &[String]) -> Option<f64> {
+    if case_vals.is_empty() || control_vals.is_empty() {
+        return None;
     }
 
     let mut case_counts: HashMap<&str, usize> = HashMap::new();
@@ -105,15 +102,15 @@ pub fn categorical_max_abs_diff(case_vals: &[String], control_vals: &[String]) -
         .chain(control_counts.keys())
         .copied()
         .collect::<HashSet<_>>();
-    let case_denominator = to_f64(case_vals.len().max(1));
-    let control_denominator = to_f64(control_vals.len().max(1));
+    let case_denominator = to_f64(case_vals.len());
+    let control_denominator = to_f64(control_vals.len());
     let mut max_diff = 0.0_f64;
     for level in levels.drain() {
         let case_prop = to_f64(*case_counts.get(level).unwrap_or(&0)) / case_denominator;
         let control_prop = to_f64(*control_counts.get(level).unwrap_or(&0)) / control_denominator;
         max_diff = max_diff.max((case_prop - control_prop).abs());
     }
-    max_diff
+    Some(max_diff)
 }
 
 /// Build projected balance rows from pre/post matched cohorts.
@@ -228,16 +225,19 @@ mod tests {
     }
 
     #[test]
-    fn numeric_smd_returns_zero_for_empty_groups() {
-        assert!((smd_numeric_from_values(&[], &[1.0]) - 0.0).abs() < 1e-12);
-        assert!((smd_numeric_from_values(&[1.0], &[]) - 0.0).abs() < 1e-12);
+    fn numeric_smd_is_undefined_for_empty_groups_and_zero_variance() {
+        assert_eq!(smd_numeric_from_values(&[], &[1.0]), None);
+        assert_eq!(smd_numeric_from_values(&[1.0], &[]), None);
+        assert_eq!(smd_numeric_from_values(&[2.0, 2.0], &[2.0, 2.0]), None);
+        assert!(smd_numeric_from_values(&[1.0, 3.0], &[2.0, 6.0]).is_some());
     }
 
     #[test]
     fn categorical_max_abs_diff_detects_distribution_shift() {
         let case = vec!["m".to_string(), "m".to_string()];
         let control = vec!["f".to_string(), "f".to_string()];
-        assert!((categorical_max_abs_diff(&case, &control) - 1.0).abs() < 1e-12);
+        assert_eq!(categorical_max_abs_diff(&case, &control), Some(1.0));
+        assert_eq!(categorical_max_abs_diff(&case, &[]), None);
     }
 
     #[test]

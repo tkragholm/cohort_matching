@@ -39,6 +39,11 @@ impl ReportConfig {
     }
 }
 
+/// Text of a balance statistic: fixed decimals, or `NA` when it is undefined.
+fn format_cell(value: Option<f64>, precision: usize) -> String {
+    value.map_or_else(|| "NA".to_string(), |value| format!("{value:.precision$}"))
+}
+
 /// Trait for types that can be rendered to a report.
 pub trait ReportSink {
     /// Write the report content to the provided writer.
@@ -61,43 +66,26 @@ impl ReportSink for BalanceReport {
 
         for row in &self.numeric {
             let p = config.precision_for(&row.name);
-            writeln!(
-                writer,
-                "{}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}",
-                row.name,
-                p,
+            let cells = [
                 row.mean_case_pre,
-                p,
                 row.mean_control_pre,
-                p,
                 row.smd_pre,
-                p,
                 row.var_ratio_pre,
-                p,
                 row.ecdf_mean_diff_pre,
-                p,
                 row.ecdf_max_diff_pre,
-                p,
                 row.eqq_mean_diff_pre,
-                p,
                 row.eqq_max_diff_pre,
-                p,
                 row.mean_case_post,
-                p,
                 row.mean_control_post,
-                p,
                 row.smd_post,
-                p,
                 row.var_ratio_post,
-                p,
                 row.ecdf_mean_diff_post,
-                p,
                 row.ecdf_max_diff_post,
-                p,
                 row.eqq_mean_diff_post,
-                p,
                 row.eqq_max_diff_post,
-            )?;
+            ]
+            .map(|value| format_cell(value, p));
+            writeln!(writer, "{}{d}{}", row.name, cells.join(&d.to_string()))?;
         }
 
         // Write Categorical Balance (often in a separate file, but here we provide a choice or a combined report)
@@ -121,27 +109,23 @@ impl ReportSink for CategoricalBalanceReport<'_> {
         for covariate in &self.0.categorical {
             let p = config.precision_for(&covariate.name);
             for level in &covariate.levels {
+                let cells = [
+                    level.p_case_pre,
+                    level.p_control_pre,
+                    level.smd_pre,
+                    level.p_case_post,
+                    level.p_control_post,
+                    level.smd_post,
+                    covariate.cramers_v_pre,
+                    covariate.cramers_v_post,
+                ]
+                .map(|value| format_cell(value, p));
                 writeln!(
                     writer,
-                    "{}{d}{}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}{d}{:.*}",
+                    "{}{d}{}{d}{}",
                     covariate.name,
                     level.level,
-                    p,
-                    level.p_case_pre,
-                    p,
-                    level.p_control_pre,
-                    p,
-                    level.smd_pre,
-                    p,
-                    level.p_case_post,
-                    p,
-                    level.p_control_post,
-                    p,
-                    level.smd_post,
-                    p,
-                    covariate.cramers_v_pre,
-                    p,
-                    covariate.cramers_v_post,
+                    cells.join(&d.to_string())
                 )?;
             }
         }
@@ -279,22 +263,22 @@ mod tests {
         let report = BalanceReport {
             numeric: vec![NumericBalance {
                 name: "age".to_string(),
-                mean_case_pre: 30.5,
-                mean_control_pre: 31.2,
-                smd_pre: 0.05,
-                var_ratio_pre: 1.0,
-                ecdf_mean_diff_pre: 0.01,
-                ecdf_max_diff_pre: 0.02,
-                eqq_mean_diff_pre: 0.0,
-                eqq_max_diff_pre: 0.0,
-                mean_case_post: 30.8,
-                mean_control_post: 30.8,
-                smd_post: 0.0,
-                var_ratio_post: 1.0,
-                ecdf_mean_diff_post: 0.0,
-                ecdf_max_diff_post: 0.0,
-                eqq_mean_diff_post: 0.0,
-                eqq_max_diff_post: 0.0,
+                mean_case_pre: Some(30.5),
+                mean_control_pre: Some(31.2),
+                smd_pre: Some(0.05),
+                var_ratio_pre: Some(1.0),
+                ecdf_mean_diff_pre: Some(0.01),
+                ecdf_max_diff_pre: Some(0.02),
+                eqq_mean_diff_pre: Some(0.0),
+                eqq_max_diff_pre: Some(0.0),
+                mean_case_post: Some(30.8),
+                mean_control_post: Some(30.8),
+                smd_post: Some(0.0),
+                var_ratio_post: Some(1.0),
+                ecdf_mean_diff_post: Some(0.0),
+                ecdf_max_diff_post: Some(0.0),
+                eqq_mean_diff_post: Some(0.0),
+                eqq_max_diff_post: Some(0.0),
             }],
             categorical: vec![],
         };
@@ -314,9 +298,9 @@ mod tests {
         let report = BalanceReport {
             numeric: vec![NumericBalance {
                 name: "propensity_score".to_string(),
-                mean_case_pre: 0.123_456_7,
-                mean_control_pre: 0.123_456_7,
-                smd_pre: 0.0,
+                mean_case_pre: Some(0.123_456_7),
+                mean_control_pre: Some(0.123_456_7),
+                smd_pre: Some(0.0),
                 ..NumericBalance::default()
             }],
             categorical: vec![],
@@ -336,6 +320,45 @@ mod tests {
         let output = String::from_utf8(buffer).unwrap();
 
         assert!(output.contains("propensity_score,0.123457,0.123457,0.000000"));
+    }
+
+    #[test]
+    fn undefined_statistics_are_written_as_na() {
+        let report = BalanceReport {
+            numeric: vec![NumericBalance {
+                name: "x".to_string(),
+                mean_case_pre: Some(1.0),
+                ..NumericBalance::default()
+            }],
+            categorical: vec![crate::types::CategoricalBalance {
+                name: "sex".to_string(),
+                levels: vec![crate::types::CategoricalLevelBalance {
+                    level: "f".to_string(),
+                    p_case_pre: Some(0.5),
+                    p_control_pre: None,
+                    smd_pre: None,
+                    p_case_post: None,
+                    p_control_post: None,
+                    smd_post: None,
+                }],
+                cramers_v_pre: None,
+                cramers_v_post: None,
+            }],
+        };
+
+        let mut buffer = Vec::new();
+        report
+            .write_report(&mut buffer, &ReportConfig::default())
+            .unwrap();
+        let numeric = String::from_utf8(buffer).unwrap();
+        assert!(numeric.contains("x,1.0000,NA,NA,NA"));
+
+        let mut buffer = Vec::new();
+        CategoricalBalanceReport(&report)
+            .write_report(&mut buffer, &ReportConfig::default())
+            .unwrap();
+        let categorical = String::from_utf8(buffer).unwrap();
+        assert!(categorical.contains("sex,f,0.5000,NA,NA,NA,NA,NA,NA,NA"));
     }
 
     #[test]

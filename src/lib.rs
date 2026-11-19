@@ -139,13 +139,14 @@ pub use matching::{
     PropensityMatchedOutcome, PropensityScoreConfig, PropensityScoreDistance,
     PropensityScoreEstimate, PropensityScoreOutputScale, RandomSelection, ReconstructedEpisode,
     ReconstructedMatchedPair, ReconstructedMatchingOptions, ReconstructedMatchingOutput,
-    ReconstructedMatchingTier, ResidentAtIndexRecord, RoleIndexedRecord, SelectionStrategy,
-    StandardMatchRequest, StrataExactConstraint, SubclassReferenceGroup, SubclassSummary,
-    SubclassificationConfig, SubclassificationOutcome, UnitRole, UnitWeightRow, UnitWeightSet,
-    UnitWeightTable, UsedControlsVec, effective_sample_size, estimate_propensity_and_match,
-    match_standard, match_weights_from_pairs, pair_weights_from_pairs,
-    prepare_mahalanobis_distance_config, prepare_propensity_distance_config,
-    reconstruct_case_control_pairs, subclassify_by_propensity_score_map,
+    ReconstructedMatchingTier, ResidentAtIndexRecord, RidgeReport, RoleIndexedRecord,
+    SelectionStrategy, StandardMatchRequest, StrataExactConstraint, SubclassReferenceGroup,
+    SubclassSummary, SubclassificationConfig, SubclassificationOutcome, UnitRole, UnitWeightRow,
+    UnitWeightSet, UnitWeightTable, UsedControlsVec, effective_sample_size,
+    estimate_propensity_and_match, match_standard, match_weights_from_pairs,
+    pair_weights_from_pairs, prepare_mahalanobis_distance_config,
+    prepare_propensity_distance_config, reconstruct_case_control_pairs,
+    subclassify_by_propensity_score_map,
 };
 pub use role_transition::{
     DefaultRiskSetPolicy, RiskSetPolicy, TransitionMatchRequest, match_transition,
@@ -164,13 +165,19 @@ pub use types::{
 
 #[cfg(feature = "bench-internals")]
 #[must_use]
-pub fn benchmark_ecdf_distance_stats(case_values: &[f64], control_values: &[f64]) -> (f64, f64) {
+pub fn benchmark_ecdf_distance_stats(
+    case_values: &[f64],
+    control_values: &[f64],
+) -> Option<(f64, f64)> {
     balance::benchmark_ecdf_distance_stats(case_values, control_values)
 }
 
 #[cfg(feature = "bench-internals")]
 #[must_use]
-pub fn benchmark_eqq_distance_stats(case_values: &[f64], control_values: &[f64]) -> (f64, f64) {
+pub fn benchmark_eqq_distance_stats(
+    case_values: &[f64],
+    control_values: &[f64],
+) -> Option<(f64, f64)> {
     balance::benchmark_eqq_distance_stats(case_values, control_values)
 }
 
@@ -197,17 +204,18 @@ pub mod prelude {
         PropensityMatchedOutcome, PropensityScoreConfig, PropensityScoreDistance,
         PropensityScoreEstimate, PropensityScoreOutputScale, ReconstructedEpisode,
         ReconstructedMatchedPair, ReconstructedMatchingOptions, ReconstructedMatchingOutput,
-        ReconstructedMatchingTier, ResidentAtIndexRecord, RiskSetPolicy, RoleIndexedRecord,
-        RoleTransitionOptions, RoleTransitionRecord, StandardMatchRequest, StrataExactConstraint,
-        SubclassReferenceGroup, SubclassSummary, SubclassificationConfig, SubclassificationOutcome,
-        SupplementalBalanceCovariates, TransitionMatchRequest, UniqueValueId, UnitRole,
-        UnitWeightRow, UnitWeightSet, UnitWeightTable, ValidatedMatchingCriteria,
-        balance_diagnostics, balance_report, balance_report_with_options,
-        balance_threshold_summary, build_projected_balance_rows, categorical_max_abs_diff,
-        effective_sample_size, estimate_propensity_and_match, match_standard, match_transition,
-        match_weights_from_pairs, pair_weights_from_pairs, prepare_mahalanobis_distance_config,
-        prepare_propensity_distance_config, reconstruct_case_control_pairs,
-        smd_numeric_from_values, subclassify_by_propensity_score_map,
+        ReconstructedMatchingTier, ResidentAtIndexRecord, RidgeReport, RiskSetPolicy,
+        RoleIndexedRecord, RoleTransitionOptions, RoleTransitionRecord, StandardMatchRequest,
+        StrataExactConstraint, SubclassReferenceGroup, SubclassSummary, SubclassificationConfig,
+        SubclassificationOutcome, SupplementalBalanceCovariates, TransitionMatchRequest,
+        UniqueValueId, UnitRole, UnitWeightRow, UnitWeightSet, UnitWeightTable,
+        ValidatedMatchingCriteria, balance_diagnostics, balance_report,
+        balance_report_with_options, balance_threshold_summary, build_projected_balance_rows,
+        categorical_max_abs_diff, effective_sample_size, estimate_propensity_and_match,
+        match_standard, match_transition, match_weights_from_pairs, pair_weights_from_pairs,
+        prepare_mahalanobis_distance_config, prepare_propensity_distance_config,
+        reconstruct_case_control_pairs, smd_numeric_from_values,
+        subclassify_by_propensity_score_map,
     };
 
     pub mod constraints {

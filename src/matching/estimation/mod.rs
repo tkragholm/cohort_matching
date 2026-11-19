@@ -22,6 +22,29 @@ use linalg::invert_matrix_with_ridge;
 use logistic::{fit_elastic_net_logistic, fit_logistic_regression};
 use rapidhash::RapidHashMap;
 
+/// Whether a linear solve needed a ridge, and how large it was.
+///
+/// The solves add a ridge to the diagonal when a pivot of the matrix is at most
+/// 1e-14, which happens when the covariates are collinear. The propensity fit
+/// also adds its configured L2 penalty
+/// ([`LogisticRegressionConfig::l2_penalty`]) and the Mahalanobis covariance its
+/// configured starting ridge ([`MahalanobisPreparationConfig::ridge`]). Both are
+/// added from the start, so `ridge` alone does not show collinearity, and
+/// `singular_without_ridge` is the flag to read.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct RidgeReport {
+    /// The ridge added to the diagonal by the solver: for the propensity fit
+    /// the largest over all IRLS iterations, not counting the L2 penalty, and
+    /// for the Mahalanobis inverse the one used, counting the configured
+    /// starting ridge. 0 when none was added.
+    pub ridge: f64,
+    /// Whether the matrix, without any ridge or penalty, had a pivot at most
+    /// 1e-14. For the propensity fit the matrix is the weighted cross-product
+    /// of the design at the first iteration. `true` means the design is
+    /// collinear or near collinear and the estimates depend on the ridge.
+    pub singular_without_ridge: bool,
+}
+
 /// Propensity-score estimation output.
 #[derive(Debug, Clone)]
 pub struct PropensityScoreEstimate {
@@ -41,6 +64,9 @@ pub struct PropensityScoreEstimate {
     pub converged: bool,
     /// Iterations executed.
     pub iterations: usize,
+    /// The ridge the IRLS solves needed; `None` for the elastic net, which
+    /// solves no linear system.
+    pub ridge: Option<RidgeReport>,
 }
 
 /// Combined propensity output and distance config.
@@ -65,6 +91,8 @@ pub struct MahalanobisDistancePreparation {
     pub dimension: usize,
     /// Encoded vector column names.
     pub column_names: Vec<String>,
+    /// The ridge added to the covariance matrix before inversion.
+    pub ridge: RidgeReport,
 }
 
 /// Matched output combined with in-crate propensity estimation details.
@@ -157,6 +185,7 @@ pub fn prepare_propensity_distance_config<R: CovariateRecord>(
         estimator: estimator_name,
         converged: fit.converged,
         iterations: fit.iterations,
+        ridge: fit.ridge,
     };
     let distance_config = DistanceConfig::propensity_score_map(distance_scores, config.caliper);
 
@@ -194,7 +223,7 @@ pub fn prepare_mahalanobis_distance_config<R: CovariateRecord>(
         candidates.len(),
         config.covariance_strategy,
     )?;
-    let inverse_covariance =
+    let (inverse_covariance, ridge) =
         invert_matrix_with_ridge(&covariance, config.ridge, config.max_ridge_attempts)?;
 
     let vectors = matrix
@@ -218,6 +247,7 @@ pub fn prepare_mahalanobis_distance_config<R: CovariateRecord>(
         inverse_covariance,
         dimension,
         column_names: matrix.column_names,
+        ridge,
     })
 }
 
@@ -606,6 +636,117 @@ mod tests {
         assert_eq!(prepared.estimate.distance_scores.len(), 2);
     }
 
+    fn record_with_duplicate_age(id: &str, day: u32, age: f64) -> BalanceRecord {
+        let mut row = BalanceRecord::new(id, date(2010, 1, day));
+        row.covariates
+            .insert("age".to_string(), CovariateValue::Numeric(age));
+        row.covariates
+            .insert("age_twice".to_string(), CovariateValue::Numeric(2.0 * age));
+        row
+    }
+
+    fn collinear_groups() -> (Vec<BalanceRecord>, Vec<BalanceRecord>) {
+        let ages_anchor = [3.0, 5.0, 4.0, 9.0, 6.0];
+        let ages_candidate = [1.0, 2.0, 8.0, 3.5, 7.0];
+        let anchors = ages_anchor
+            .iter()
+            .enumerate()
+            .map(|(idx, age)| record_with_duplicate_age(&format!("a{idx}"), 1 + idx as u32, *age))
+            .collect();
+        let candidates = ages_candidate
+            .iter()
+            .enumerate()
+            .map(|(idx, age)| record_with_duplicate_age(&format!("c{idx}"), 10 + idx as u32, *age))
+            .collect();
+        (anchors, candidates)
+    }
+
+    #[test]
+    fn collinear_covariates_are_reported_by_the_propensity_fit() {
+        let (anchors, candidates) = collinear_groups();
+        let prepared = prepare_propensity_distance_config(
+            &anchors,
+            &candidates,
+            &PropensityScoreConfig::default(),
+        )
+        .expect("a ridged fit should succeed");
+        let ridge = prepared.estimate.ridge.expect("IRLS reports its ridge");
+        assert!(ridge.singular_without_ridge);
+    }
+
+    #[test]
+    fn independent_covariates_report_no_ridge_in_the_propensity_fit() {
+        let anchors = vec![
+            record("a1", date(2010, 1, 1), 10.0, "north"),
+            record("a2", date(2010, 1, 2), 12.0, "south"),
+            record("a3", date(2010, 1, 3), 7.0, "north"),
+        ];
+        let candidates = vec![
+            record("c1", date(2010, 1, 3), 1.0, "south"),
+            record("c2", date(2010, 1, 4), 9.0, "north"),
+            record("c3", date(2010, 1, 5), 5.0, "south"),
+        ];
+        let prepared = prepare_propensity_distance_config(
+            &anchors,
+            &candidates,
+            &PropensityScoreConfig::default(),
+        )
+        .expect("propensity estimation should succeed");
+        let ridge = prepared.estimate.ridge.expect("IRLS reports its ridge");
+        assert!(!ridge.singular_without_ridge);
+        assert!(ridge.ridge.abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn collinear_covariates_are_reported_by_the_mahalanobis_inverse() {
+        let (anchors, candidates) = collinear_groups();
+        let prepared = prepare_mahalanobis_distance_config(
+            &anchors,
+            &candidates,
+            None,
+            &MahalanobisPreparationConfig::default(),
+        )
+        .expect("a ridged inverse should succeed");
+        assert!(prepared.ridge.singular_without_ridge);
+        assert!(prepared.ridge.ridge >= 1e-8);
+    }
+
+    #[test]
+    fn independent_covariates_report_only_the_configured_ridge_in_the_mahalanobis_inverse() {
+        let anchors = vec![
+            record("a1", date(2010, 1, 1), 10.0, "north"),
+            record("a2", date(2010, 1, 2), 12.0, "south"),
+            record("a3", date(2010, 1, 3), 7.0, "north"),
+        ];
+        let candidates = vec![
+            record("c1", date(2010, 1, 3), 1.0, "south"),
+            record("c2", date(2010, 1, 4), 9.0, "north"),
+            record("c3", date(2010, 1, 5), 5.0, "south"),
+        ];
+        let prepared = prepare_mahalanobis_distance_config(
+            &anchors,
+            &candidates,
+            None,
+            &MahalanobisPreparationConfig::default(),
+        )
+        .expect("mahalanobis preparation should succeed");
+        assert!(!prepared.ridge.singular_without_ridge);
+        assert!((prepared.ridge.ridge - 1e-8).abs() < 1e-20);
+    }
+
+    #[test]
+    fn elastic_net_fit_reports_no_ridge() {
+        let (anchors, candidates) = collinear_groups();
+        let config = PropensityScoreConfig::builder()
+            .estimator(PropensityEstimator::ElasticNetLogit(
+                ElasticNetLogisticConfig::default(),
+            ))
+            .build();
+        let prepared = prepare_propensity_distance_config(&anchors, &candidates, &config)
+            .expect("elastic net fit should succeed");
+        assert_eq!(prepared.estimate.ridge, None);
+    }
+
     #[test]
     fn helper_type_is_constructible_for_external_use() {
         let _unused = PropensityMatchedOutcome {
@@ -626,6 +767,7 @@ mod tests {
                 estimator: "glm_logit",
                 converged: true,
                 iterations: 0,
+                ridge: None,
             },
         };
     }

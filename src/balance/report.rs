@@ -74,23 +74,28 @@ pub fn balance_threshold_summary(
         .numeric
         .iter()
         .map(|metric| {
-            let smd_post_ok = thresholds
-                .smd_abs_max
-                .map(|threshold| metric.smd_post.abs() <= threshold);
+            // An undefined statistic cannot show balance, so an enabled check on it fails.
+            let smd_post_ok = thresholds.smd_abs_max.map(|threshold| {
+                metric
+                    .smd_post
+                    .is_some_and(|value| value.abs() <= threshold)
+            });
             let var_ratio_post_ok = match (thresholds.var_ratio_min, thresholds.var_ratio_max) {
-                (Some(min), Some(max)) => {
-                    Some(metric.var_ratio_post >= min && metric.var_ratio_post <= max)
-                }
-                (Some(min), None) => Some(metric.var_ratio_post >= min),
-                (None, Some(max)) => Some(metric.var_ratio_post <= max),
                 (None, None) => None,
+                (min, max) => Some(metric.var_ratio_post.is_some_and(|value| {
+                    min.is_none_or(|min| value >= min) && max.is_none_or(|max| value <= max)
+                })),
             };
-            let ecdf_max_diff_post_ok = thresholds
-                .ecdf_max_diff_max
-                .map(|threshold| metric.ecdf_max_diff_post <= threshold);
-            let eqq_max_diff_post_ok = thresholds
-                .eqq_max_diff_max
-                .map(|threshold| metric.eqq_max_diff_post <= threshold);
+            let ecdf_max_diff_post_ok = thresholds.ecdf_max_diff_max.map(|threshold| {
+                metric
+                    .ecdf_max_diff_post
+                    .is_some_and(|value| value <= threshold)
+            });
+            let eqq_max_diff_post_ok = thresholds.eqq_max_diff_max.map(|threshold| {
+                metric
+                    .eqq_max_diff_post
+                    .is_some_and(|value| value <= threshold)
+            });
 
             let enabled_checks = [
                 smd_post_ok,
@@ -265,49 +270,37 @@ fn summarize_numeric_feature(
     let case_pre_values = numeric_feature_values(cases, feature, context.case_supplemental);
     let control_pre_values =
         numeric_feature_values(controls, feature, context.control_supplemental);
-    let (mean_case_pre, var_case_pre) = mean_var_numeric(&case_pre_values);
-    let (mean_control_pre, var_control_pre) = mean_var_numeric(&control_pre_values);
-    let smd_pre = smd_numeric(
-        mean_case_pre,
-        mean_control_pre,
-        var_case_pre,
-        var_control_pre,
-    );
-    let var_ratio_pre = variance_ratio(var_case_pre, var_control_pre);
+    let case_pre = mean_var_numeric(&case_pre_values);
+    let control_pre = mean_var_numeric(&control_pre_values);
+    let (smd_pre, var_ratio_pre) = smd_and_variance_ratio(case_pre, control_pre);
     let (ecdf_mean_diff_pre, ecdf_max_diff_pre) =
-        ecdf_distance_stats(&case_pre_values, &control_pre_values);
+        split_pair(ecdf_distance_stats(&case_pre_values, &control_pre_values));
     let (eqq_mean_diff_pre, eqq_max_diff_pre) =
-        eqq_distance_stats(&case_pre_values, &control_pre_values);
+        split_pair(eqq_distance_stats(&case_pre_values, &control_pre_values));
 
     let case_post_values = numeric_feature_values(cases_post, feature, context.case_supplemental);
     let control_post_values =
         numeric_feature_values(controls_post, feature, context.control_supplemental);
-    let (mean_case_post, var_case_post) = mean_var_numeric(&case_post_values);
-    let (mean_control_post, var_control_post) = mean_var_numeric(&control_post_values);
-    let smd_post = smd_numeric(
-        mean_case_post,
-        mean_control_post,
-        var_case_post,
-        var_control_post,
-    );
-    let var_ratio_post = variance_ratio(var_case_post, var_control_post);
+    let case_post = mean_var_numeric(&case_post_values);
+    let control_post = mean_var_numeric(&control_post_values);
+    let (smd_post, var_ratio_post) = smd_and_variance_ratio(case_post, control_post);
     let (ecdf_mean_diff_post, ecdf_max_diff_post) =
-        ecdf_distance_stats(&case_post_values, &control_post_values);
+        split_pair(ecdf_distance_stats(&case_post_values, &control_post_values));
     let (eqq_mean_diff_post, eqq_max_diff_post) =
-        eqq_distance_stats(&case_post_values, &control_post_values);
+        split_pair(eqq_distance_stats(&case_post_values, &control_post_values));
 
     NumericBalance {
         name: feature.name(),
-        mean_case_pre,
-        mean_control_pre,
+        mean_case_pre: case_pre.map(|(mean, _)| mean),
+        mean_control_pre: control_pre.map(|(mean, _)| mean),
         smd_pre,
         var_ratio_pre,
         ecdf_mean_diff_pre,
         ecdf_max_diff_pre,
         eqq_mean_diff_pre,
         eqq_max_diff_pre,
-        mean_case_post,
-        mean_control_post,
+        mean_case_post: case_post.map(|(mean, _)| mean),
+        mean_control_post: control_post.map(|(mean, _)| mean),
         smd_post,
         var_ratio_post,
         ecdf_mean_diff_post,
@@ -483,9 +476,10 @@ fn numeric_covariate(
     }
 }
 
-fn mean_var_numeric(values: &[f64]) -> (f64, f64) {
+/// Mean and population variance, `None` for an empty group.
+fn mean_var_numeric(values: &[f64]) -> Option<(f64, f64)> {
     if values.is_empty() {
-        return (0.0, 0.0);
+        return None;
     }
 
     let mean = values.iter().sum::<f64>() / to_f64(values.len());
@@ -497,7 +491,24 @@ fn mean_var_numeric(values: &[f64]) -> (f64, f64) {
         })
         .sum::<f64>()
         / to_f64(values.len());
-    (mean, var)
+    Some((mean, var))
+}
+
+fn smd_and_variance_ratio(
+    case: Option<(f64, f64)>,
+    control: Option<(f64, f64)>,
+) -> (Option<f64>, Option<f64>) {
+    match (case, control) {
+        (Some((mean_case, var_case)), Some((mean_control, var_control))) => (
+            smd_numeric(mean_case, mean_control, var_case, var_control),
+            variance_ratio(var_case, var_control),
+        ),
+        _ => (None, None),
+    }
+}
+
+fn split_pair(pair: Option<(f64, f64)>) -> (Option<f64>, Option<f64>) {
+    (pair.map(|(first, _)| first), pair.map(|(_, second)| second))
 }
 
 fn collect_levels(
@@ -667,8 +678,8 @@ mod tests {
         );
 
         let numeric = &report.numeric[0];
-        assert!((numeric.mean_case_post - 10.0).abs() < 1e-12);
-        assert!((numeric.mean_control_post - 40.0).abs() < 1e-12);
+        assert!((numeric.mean_case_post.unwrap() - 10.0).abs() < 1e-12);
+        assert!((numeric.mean_control_post.unwrap() - 40.0).abs() < 1e-12);
     }
 
     #[test]
@@ -900,11 +911,60 @@ mod tests {
             &test_outcome(vec![MatchedPair::new("case_a", "control_b")], 1, 0),
         );
         let numeric = &report.numeric[0];
-        assert!((numeric.var_ratio_pre - 0.0).abs() < 1e-12);
-        assert!((numeric.ecdf_max_diff_pre - 0.5).abs() < 1e-12);
-        assert!(numeric.ecdf_mean_diff_pre > 0.0);
-        assert!((numeric.eqq_max_diff_pre - 1.0).abs() < 1e-12);
-        assert!(numeric.eqq_mean_diff_pre > 0.0);
+        assert!((numeric.var_ratio_pre.unwrap() - 0.0).abs() < 1e-12);
+        assert!((numeric.ecdf_max_diff_pre.unwrap() - 0.5).abs() < 1e-12);
+        assert!(numeric.ecdf_mean_diff_pre.unwrap() > 0.0);
+        assert!((numeric.eqq_max_diff_pre.unwrap() - 1.0).abs() < 1e-12);
+        assert!(numeric.eqq_mean_diff_pre.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn constant_covariate_has_undefined_smd_and_variance_ratio() {
+        let mut case_a = participant("case_a");
+        case_a
+            .covariates
+            .insert("x".to_string(), CovariateValue::Numeric(3.0));
+        let mut control_a = participant("control_a");
+        control_a
+            .covariates
+            .insert("x".to_string(), CovariateValue::Numeric(3.0));
+
+        let report = balance_report(
+            &[case_a],
+            &[control_a],
+            &test_outcome(vec![MatchedPair::new("case_a", "control_a")], 1, 0),
+        );
+        let numeric = &report.numeric[0];
+        assert_eq!(numeric.mean_case_pre, Some(3.0));
+        assert_eq!(numeric.smd_pre, None);
+        assert_eq!(numeric.var_ratio_pre, None);
+        assert_eq!(numeric.smd_post, None);
+        assert_eq!(numeric.var_ratio_post, None);
+
+        let summary = balance_threshold_summary(&report, &BalanceThresholds::default());
+        assert_eq!(summary.numeric[0].smd_post_ok, Some(false));
+        assert_eq!(summary.numeric[0].var_ratio_post_ok, Some(false));
+        assert!(!summary.all_enabled_checks_ok);
+    }
+
+    #[test]
+    fn empty_matched_group_has_undefined_post_statistics() {
+        let mut case_a = participant("case_a");
+        case_a
+            .covariates
+            .insert("x".to_string(), CovariateValue::Numeric(1.0));
+        let mut control_a = participant("control_a");
+        control_a
+            .covariates
+            .insert("x".to_string(), CovariateValue::Numeric(2.0));
+
+        let report = balance_report(&[case_a], &[control_a], &test_outcome(Vec::new(), 0, 1));
+        let numeric = &report.numeric[0];
+        assert_eq!(numeric.mean_case_post, None);
+        assert_eq!(numeric.mean_control_post, None);
+        assert_eq!(numeric.smd_post, None);
+        assert_eq!(numeric.ecdf_max_diff_post, None);
+        assert_eq!(numeric.eqq_mean_diff_post, None);
     }
 
     #[test]
@@ -912,22 +972,22 @@ mod tests {
         let report = BalanceReport {
             numeric: vec![NumericBalance {
                 name: "x".to_string(),
-                mean_case_pre: 0.0,
-                mean_control_pre: 0.0,
-                smd_pre: 0.0,
-                var_ratio_pre: 1.0,
-                ecdf_mean_diff_pre: 0.0,
-                ecdf_max_diff_pre: 0.0,
-                eqq_mean_diff_pre: 0.0,
-                eqq_max_diff_pre: 0.0,
-                mean_case_post: 0.0,
-                mean_control_post: 0.0,
-                smd_post: 0.05,
-                var_ratio_post: 1.0,
-                ecdf_mean_diff_post: 0.02,
-                ecdf_max_diff_post: 0.06,
-                eqq_mean_diff_post: 0.03,
-                eqq_max_diff_post: 0.40,
+                mean_case_pre: Some(0.0),
+                mean_control_pre: Some(0.0),
+                smd_pre: Some(0.0),
+                var_ratio_pre: Some(1.0),
+                ecdf_mean_diff_pre: Some(0.0),
+                ecdf_max_diff_pre: Some(0.0),
+                eqq_mean_diff_pre: Some(0.0),
+                eqq_max_diff_pre: Some(0.0),
+                mean_case_post: Some(0.0),
+                mean_control_post: Some(0.0),
+                smd_post: Some(0.05),
+                var_ratio_post: Some(1.0),
+                ecdf_mean_diff_post: Some(0.02),
+                ecdf_max_diff_post: Some(0.06),
+                eqq_mean_diff_post: Some(0.03),
+                eqq_max_diff_post: Some(0.40),
             }],
             categorical: Vec::new(),
         };
@@ -959,22 +1019,22 @@ mod tests {
         let report = BalanceReport {
             numeric: vec![NumericBalance {
                 name: "x".to_string(),
-                mean_case_pre: 0.0,
-                mean_control_pre: 0.0,
-                smd_pre: 0.0,
-                var_ratio_pre: 1.0,
-                ecdf_mean_diff_pre: 0.0,
-                ecdf_max_diff_pre: 0.0,
-                eqq_mean_diff_pre: 0.0,
-                eqq_max_diff_pre: 0.0,
-                mean_case_post: 0.0,
-                mean_control_post: 0.0,
-                smd_post: 5.0,
-                var_ratio_post: 5.0,
-                ecdf_mean_diff_post: 5.0,
-                ecdf_max_diff_post: 5.0,
-                eqq_mean_diff_post: 5.0,
-                eqq_max_diff_post: 5.0,
+                mean_case_pre: Some(0.0),
+                mean_control_pre: Some(0.0),
+                smd_pre: Some(0.0),
+                var_ratio_pre: Some(1.0),
+                ecdf_mean_diff_pre: Some(0.0),
+                ecdf_max_diff_pre: Some(0.0),
+                eqq_mean_diff_pre: Some(0.0),
+                eqq_max_diff_pre: Some(0.0),
+                mean_case_post: Some(0.0),
+                mean_control_post: Some(0.0),
+                smd_post: Some(5.0),
+                var_ratio_post: Some(5.0),
+                ecdf_mean_diff_post: Some(5.0),
+                ecdf_max_diff_post: Some(5.0),
+                eqq_mean_diff_post: Some(5.0),
+                eqq_max_diff_post: Some(5.0),
             }],
             categorical: Vec::new(),
         };

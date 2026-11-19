@@ -25,7 +25,7 @@ pub use estimation::{
     LogisticRegressionConfig, MahalanobisCovarianceStrategy, MahalanobisDistancePreparation,
     MahalanobisPreparationConfig, MahalanobisTransform, MissingValuePolicy,
     PropensityDistancePreparation, PropensityEstimator, PropensityMatchedOutcome,
-    PropensityScoreConfig, PropensityScoreEstimate, PropensityScoreOutputScale,
+    PropensityScoreConfig, PropensityScoreEstimate, PropensityScoreOutputScale, RidgeReport,
     estimate_propensity_and_match, prepare_mahalanobis_distance_config,
     prepare_propensity_distance_config,
 };

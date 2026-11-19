@@ -9,9 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Breaking: a balance statistic that does not exist is `None` instead of 0.
+  The fields of `NumericBalance`, `CategoricalLevelBalance` and
+  `CategoricalBalance` that are statistics (means, proportions, standardized
+  mean differences, variance ratios, eCDF and eQQ distances, Cramér's V) are
+  `Option<f64>`. They are `None` for a mean or proportion of an empty group, a
+  standardized mean difference or variance ratio whose variances are zero or not
+  finite, a distance with an empty group, and Cramér's V with no observations.
+  A `NaN` is no longer written either. They serialize as `null` and the CSV
+  reports write `NA`. `smd_numeric_from_values`, `categorical_max_abs_diff` and
+  `ProjectedBalanceRow::smd_before` and `smd_after` return `Option<f64>`, and
+  `categorical_max_abs_diff` is `None` when a group is empty.
+- `balance_threshold_summary` counts an enabled check on an undefined statistic
+  as failed.
 - The age limit of role-transition matching is computed by epistat-register's
   `age_in_years` with civil years, the rule it used before; results are
   unchanged.
+
+### Added
+
+- `RidgeReport`, on `PropensityScoreEstimate::ridge` (`None` for the elastic net)
+  and `MahalanobisDistancePreparation::ridge`. `singular_without_ridge` is `true`
+  when the matrix had a pivot of at most 1e-14 before any ridge or penalty, that
+  is, when the covariates are collinear, and `ridge` is the ridge the solver
+  added. The default L2 penalty of the propensity fit and the default starting
+  ridge of the Mahalanobis inverse already keep a collinear design from
+  failing, so `ridge` alone does not show it. Estimates are unchanged.
+- The elastic-net logistic fit is checked against R's `glmnet` 5.2
+  (`tests/glmnet_reference.R`, `tests/glmnet_reference.json`). The objective is
+  the same as `glmnet` with `standardize = FALSE`. Coefficients agree to 1e-7
+  after convergence on covariates of unit scale. With the default 500
+  iterations the fit can stop short, and on a covariate of scale 40 it is far
+  from the optimum; the docs of `ElasticNetLogisticConfig` say so.
 
 ## [0.6.0] - 2026-11-19
 

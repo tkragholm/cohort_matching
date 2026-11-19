@@ -40,52 +40,57 @@ impl BalanceDiagnostics {
 }
 
 /// Numeric covariate balance summary.
+///
+/// A statistic that does not exist for the data is `None`: a mean or proportion of an
+/// empty group, a standardized mean difference or variance ratio whose variances are
+/// not usable, a distance with an empty group, Cramér's V with no observations.
+/// Serialized as `null`; the CSV reports write `NA`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NumericBalance {
     /// Covariate name.
     pub name: String,
     /// Pre-match anchor mean.
-    pub mean_case_pre: f64,
+    pub mean_case_pre: Option<f64>,
     /// Pre-match candidate mean.
-    pub mean_control_pre: f64,
+    pub mean_control_pre: Option<f64>,
     /// Pre-match standardized mean difference.
-    pub smd_pre: f64,
+    pub smd_pre: Option<f64>,
     /// Pre-match variance ratio (`anchor / candidate`).
     #[serde(default)]
-    pub var_ratio_pre: f64,
+    pub var_ratio_pre: Option<f64>,
     /// Pre-match mean absolute eCDF distance.
     #[serde(default)]
-    pub ecdf_mean_diff_pre: f64,
+    pub ecdf_mean_diff_pre: Option<f64>,
     /// Pre-match max absolute eCDF distance.
     #[serde(default)]
-    pub ecdf_max_diff_pre: f64,
+    pub ecdf_max_diff_pre: Option<f64>,
     /// Pre-match mean absolute eQQ distance.
     #[serde(default)]
-    pub eqq_mean_diff_pre: f64,
+    pub eqq_mean_diff_pre: Option<f64>,
     /// Pre-match max absolute eQQ distance.
     #[serde(default)]
-    pub eqq_max_diff_pre: f64,
+    pub eqq_max_diff_pre: Option<f64>,
     /// Post-match anchor mean.
-    pub mean_case_post: f64,
+    pub mean_case_post: Option<f64>,
     /// Post-match candidate mean.
-    pub mean_control_post: f64,
+    pub mean_control_post: Option<f64>,
     /// Post-match standardized mean difference.
-    pub smd_post: f64,
+    pub smd_post: Option<f64>,
     /// Post-match variance ratio (`anchor / candidate`).
     #[serde(default)]
-    pub var_ratio_post: f64,
+    pub var_ratio_post: Option<f64>,
     /// Post-match mean absolute eCDF distance.
     #[serde(default)]
-    pub ecdf_mean_diff_post: f64,
+    pub ecdf_mean_diff_post: Option<f64>,
     /// Post-match max absolute eCDF distance.
     #[serde(default)]
-    pub ecdf_max_diff_post: f64,
+    pub ecdf_max_diff_post: Option<f64>,
     /// Post-match mean absolute eQQ distance.
     #[serde(default)]
-    pub eqq_mean_diff_post: f64,
+    pub eqq_mean_diff_post: Option<f64>,
     /// Post-match max absolute eQQ distance.
     #[serde(default)]
-    pub eqq_max_diff_post: f64,
+    pub eqq_max_diff_post: Option<f64>,
 }
 
 /// Categorical level balance summary.
@@ -94,17 +99,17 @@ pub struct CategoricalLevelBalance {
     /// Level name.
     pub level: String,
     /// Pre-match anchor proportion.
-    pub p_case_pre: f64,
+    pub p_case_pre: Option<f64>,
     /// Pre-match candidate proportion.
-    pub p_control_pre: f64,
+    pub p_control_pre: Option<f64>,
     /// Pre-match standardized mean difference.
-    pub smd_pre: f64,
+    pub smd_pre: Option<f64>,
     /// Post-match anchor proportion.
-    pub p_case_post: f64,
+    pub p_case_post: Option<f64>,
     /// Post-match candidate proportion.
-    pub p_control_post: f64,
+    pub p_control_post: Option<f64>,
     /// Post-match standardized mean difference.
-    pub smd_post: f64,
+    pub smd_post: Option<f64>,
 }
 
 /// Categorical covariate balance summary.
@@ -115,9 +120,9 @@ pub struct CategoricalBalance {
     /// Per-level balance statistics.
     pub levels: Vec<CategoricalLevelBalance>,
     /// Pre-match Cramer's V.
-    pub cramers_v_pre: f64,
+    pub cramers_v_pre: Option<f64>,
     /// Post-match Cramer's V.
-    pub cramers_v_post: f64,
+    pub cramers_v_post: Option<f64>,
 }
 
 /// Full balance report across numeric and categorical covariates.
