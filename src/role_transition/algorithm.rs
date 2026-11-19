@@ -9,7 +9,7 @@ use crate::types::{
     MatchOutcome, MatchRatio, MatchedPair, MatchingCriteria, RoleTransitionOptions, UniqueValueId,
 };
 use chrono::{Datelike, NaiveDate};
-use epistat_register::{AgeRule, age_in_years};
+use epistat_register::{AgeRule, LeapBirthday, age_in_years};
 use itertools::Itertools;
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
@@ -551,8 +551,12 @@ fn is_case_before_age_limit<R: RoleIndexedRecord>(row: &R, age_limit_years: u8) 
     };
     let day = |date: NaiveDate| i64::from(date.num_days_from_ce() - UNIX_EPOCH_DAYS_FROM_CE);
     // An event before birth is below any age limit.
-    age_in_years(day(row.birth_date()), day(event_date), AgeRule::CivilYears)
-        .is_none_or(|age| age < u32::from(age_limit_years))
+    age_in_years(
+        day(row.birth_date()),
+        day(event_date),
+        AgeRule::CivilYears(LeapBirthday::February28),
+    )
+    .is_none_or(|age| age < u32::from(age_limit_years))
 }
 
 fn default_control_is_at_risk<R: RoleIndexedRecord>(
