@@ -4,7 +4,7 @@ use super::config::{ElasticNetLogisticConfig, LogisticRegressionConfig};
 use super::encoding::CovariateMatrix;
 use super::linalg::{is_singular, solve_with_ridge_retry};
 use super::{EstimationError, RidgeReport};
-use crate::matching::to_f64;
+use epistat_glm::{ElasticNet, Family};
 
 #[derive(Debug, Clone)]
 pub(super) struct LogisticFit {
@@ -116,40 +116,20 @@ pub(super) fn fit_logistic_regression(
     })
 }
 
-/// Inner coordinate-descent passes allowed per IRLS step.
-const MAX_INNER_PASSES: usize = 10_000;
-/// Step halvings allowed when an IRLS step raises the penalised objective.
-const MAX_HALVINGS: usize = 30;
-
-/// Elastic-net logistic regression by IRLS with cyclic coordinate descent.
+/// Elastic-net logistic regression by IRLS with cyclic coordinate descent,
+/// fitted by [`epistat_glm::ElasticNet`].
 ///
 /// The objective is the mean log-loss plus
 /// `lambda * (alpha * |b|_1 + (1 - alpha) / 2 * |b|_2^2)`, with the intercept
 /// unpenalised and the covariates used as given. It is the objective of R's
-/// `glmnet(family = "binomial", standardize = FALSE)`.
+/// `glmnet(family = "binomial", standardize = FALSE)`. The column named
+/// `intercept` has penalty factor 0 and every other column 1. `alpha` is
+/// clamped to `[0, 1]` and a negative `lambda` is taken as 0.
 ///
-/// Each outer step takes the quadratic approximation of the log-loss at the
-/// current coefficients: weights `w = p (1 - p)` and working response
-/// `z = eta + (y - p) / w`. The penalised weighted least-squares problem
-/// `1 / (2 n) * sum w (z - x b)^2 + penalty` is then solved by cyclic
-/// coordinate descent. For coordinate `j`, with `v_j = mean(w x_j^2)`,
-///
-/// ```text
-/// b_j = S(mean(w x_j (z - x b + x_j b_j)), lambda * alpha) / (v_j + lambda * (1 - alpha))
-/// ```
-///
-/// where `S` is soft-thresholding; the intercept is updated without it and
-/// without the ridge term. The residual is updated in place after each
-/// coordinate, so a pass costs `O(n p)`. If a step raises the penalised
-/// objective it is halved towards the previous coefficients.
-///
-/// A coordinate pass stops when `max_j v_j * (change in b_j)^2` is at most
-/// `tolerance`, the rule of `glmnet`'s `thresh`. The weighting makes the
-/// criterion independent of the scale of a column. The outer loop stops on the
-/// same quantity measured over a whole IRLS step. Because the penalised
-/// objective is strictly convex in the quadratic approximation, the pass count
-/// does not depend on the scale of the covariates and grows only mildly with
-/// their correlation.
+/// The coordinate pass stops when `max_j v_j * (change in b_j)^2` is at most
+/// `tolerance`, the rule of `glmnet`'s `thresh`, and the outer loop stops on the
+/// same quantity measured over a whole IRLS step. `converged` is false when
+/// `max_iter` steps or the pass limit were reached first.
 ///
 /// Reference: Friedman, Hastie and Tibshirani (2010), Regularization paths for
 /// generalized linear models via coordinate descent, Journal of Statistical
@@ -175,208 +155,32 @@ pub(super) fn fit_elastic_net_logistic(
         return Err(EstimationError::InvalidElasticNetConfig);
     }
 
-    let alpha = config.alpha.clamp(0.0, 1.0);
-    let lambda = config.lambda.max(0.0);
-    let l1 = lambda * alpha;
-    let l2 = lambda * (1.0 - alpha);
-    let n = matrix.n_rows;
-    let p = matrix.n_cols;
-    let n_inv = 1.0 / to_f64(n);
-
-    // Column-major copy, so a coordinate update runs over contiguous memory.
-    let mut columns = vec![0.0_f64; n * p];
-    for row_idx in 0..n {
-        for (col_idx, value) in matrix.row(row_idx).iter().enumerate() {
-            columns[col_idx * n + row_idx] = *value;
-        }
-    }
-    let is_intercept: Vec<bool> = matrix
+    let design = faer::MatRef::from_row_major_slice(&matrix.values, matrix.n_rows, matrix.n_cols);
+    let penalty_factor: Vec<f64> = matrix
         .column_names
         .iter()
-        .map(|name| name == "intercept")
+        .map(|name| if name == "intercept" { 0.0 } else { 1.0 })
         .collect();
-
-    let mut coefficients = vec![0.0_f64; p];
-    let mut linear_predictor = vec![0.0_f64; n];
-    let mut probabilities = vec![0.5_f64; n];
-    let mut weights = vec![0.0_f64; n];
-    let mut residual = vec![0.0_f64; n];
-    let mut variances = vec![0.0_f64; p];
-    let mut converged = false;
-    let mut iterations = 0usize;
-
-    refresh_predictions(
-        matrix,
-        &coefficients,
-        config.probability_clip,
-        &mut linear_predictor,
-        &mut probabilities,
+    let mut model = ElasticNet::new(
+        Family::Binomial,
+        config.lambda.max(0.0),
+        config.alpha.clamp(0.0, 1.0),
     );
-    let mut current_objective = penalised_objective(
-        &linear_predictor,
-        labels,
-        &coefficients,
-        &is_intercept,
-        l1,
-        l2,
-    );
-
-    for iter_idx in 0..config.max_iter {
-        iterations = iter_idx + 1;
-
-        for row_idx in 0..n {
-            let probability = probabilities[row_idx];
-            let weight = (probability * (1.0 - probability)).max(config.probability_clip);
-            weights[row_idx] = weight;
-            residual[row_idx] = (labels[row_idx] - probability) / weight;
-        }
-        for col_idx in 0..p {
-            let column = &columns[col_idx * n..(col_idx + 1) * n];
-            variances[col_idx] = column
-                .iter()
-                .zip(&weights)
-                .map(|(x, w)| w * x * x)
-                .sum::<f64>()
-                * n_inv;
-        }
-
-        let start = coefficients.clone();
-        let mut inner_converged = false;
-        for _ in 0..MAX_INNER_PASSES {
-            let mut max_change = 0.0_f64;
-            for col_idx in 0..p {
-                let variance = variances[col_idx];
-                if variance <= 0.0 {
-                    continue;
-                }
-                let column = &columns[col_idx * n..(col_idx + 1) * n];
-                let previous = coefficients[col_idx];
-                let gradient = column
-                    .iter()
-                    .zip(&weights)
-                    .zip(&residual)
-                    .map(|((x, w), r)| w * x * r)
-                    .sum::<f64>()
-                    * n_inv;
-                let target = variance.mul_add(previous, gradient);
-                let updated = if is_intercept[col_idx] {
-                    target / variance
-                } else {
-                    soft_threshold(target, l1) / (variance + l2)
-                };
-                let change = updated - previous;
-                if change != 0.0 {
-                    for (r, x) in residual.iter_mut().zip(column) {
-                        *r -= change * x;
-                    }
-                    coefficients[col_idx] = updated;
-                }
-                max_change = max_change.max(variance * change * change);
-            }
-            if max_change <= config.tolerance {
-                inner_converged = true;
-                break;
-            }
-        }
-
-        // Halve the step towards the previous coefficients until the penalised
-        // objective does not rise.
-        let full_step = coefficients.clone();
-        let mut accepted = false;
-        let mut factor = 1.0_f64;
-        for _ in 0..=MAX_HALVINGS {
-            for col_idx in 0..p {
-                coefficients[col_idx] =
-                    start[col_idx] + factor * (full_step[col_idx] - start[col_idx]);
-            }
-            refresh_predictions(
-                matrix,
-                &coefficients,
-                config.probability_clip,
-                &mut linear_predictor,
-                &mut probabilities,
-            );
-            let candidate = penalised_objective(
-                &linear_predictor,
-                labels,
-                &coefficients,
-                &is_intercept,
-                l1,
-                l2,
-            );
-            if candidate <= current_objective + 1e-14 * current_objective.abs().max(1.0) {
-                current_objective = candidate;
-                accepted = true;
-                break;
-            }
-            factor *= 0.5;
-        }
-        if !accepted {
-            coefficients.copy_from_slice(&start);
-            refresh_predictions(
-                matrix,
-                &coefficients,
-                config.probability_clip,
-                &mut linear_predictor,
-                &mut probabilities,
-            );
-            break;
-        }
-
-        let outer_change = (0..p)
-            .map(|col_idx| {
-                let change = coefficients[col_idx] - start[col_idx];
-                variances[col_idx] * change * change
-            })
-            .fold(0.0_f64, f64::max);
-        if outer_change <= config.tolerance && inner_converged {
-            converged = true;
-            break;
-        }
-    }
+    model.tolerance = config.tolerance;
+    model.max_iterations = config.max_iter;
+    model.probability_clip = config.probability_clip;
+    let fit = model
+        .fit(design, labels, None, None, Some(&penalty_factor), None)
+        .map_err(|_| EstimationError::InvalidElasticNetConfig)?;
 
     Ok(LogisticFit {
         ridge: None,
-        coefficients,
-        linear_predictor,
-        probabilities,
-        converged,
-        iterations,
+        coefficients: fit.coefficients,
+        linear_predictor: fit.linear_predictor,
+        probabilities: fit.fitted,
+        converged: fit.converged,
+        iterations: fit.iterations,
     })
-}
-
-/// Mean log-loss plus the elastic-net penalty on the non-intercept coefficients.
-fn penalised_objective(
-    linear_predictor: &[f64],
-    labels: &[f64],
-    coefficients: &[f64],
-    is_intercept: &[bool],
-    l1: f64,
-    l2: f64,
-) -> f64 {
-    let loss = linear_predictor
-        .iter()
-        .zip(labels)
-        .map(|(eta, y)| eta.max(0.0) + (-eta.abs()).exp().ln_1p() - y * eta)
-        .sum::<f64>()
-        / to_f64(linear_predictor.len());
-    let penalty = coefficients
-        .iter()
-        .zip(is_intercept)
-        .filter(|(_, intercept)| !**intercept)
-        .map(|(b, _)| l1.mul_add(b.abs(), 0.5 * l2 * b * b))
-        .sum::<f64>();
-    loss + penalty
-}
-
-fn soft_threshold(value: f64, threshold: f64) -> f64 {
-    if value > threshold {
-        value - threshold
-    } else if value < -threshold {
-        value + threshold
-    } else {
-        0.0
-    }
 }
 
 fn sigmoid_clipped(value: f64, clip: f64) -> f64 {
@@ -391,11 +195,6 @@ fn sigmoid_clipped(value: f64, clip: f64) -> f64 {
 }
 
 /// Recompute the linear predictor and the clipped probabilities in place.
-///
-/// The same nine lines appeared four times: twice inside an IRLS loop and
-/// twice after one, to leave the caller holding predictions that match the
-/// coefficients it is about to return. Four copies of a numeric kernel is four
-/// places for a clip or a dot product to drift apart.
 fn refresh_predictions(
     matrix: &CovariateMatrix,
     coefficients: &[f64],

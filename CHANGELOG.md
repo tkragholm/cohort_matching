@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - Unreleased
+
+### Changed
+
+- The elastic-net logistic fit is `epistat_glm::ElasticNet` with the binomial
+  family. The column named `intercept` is the unpenalised one. On the glmnet
+  reference fits the coefficients move by up to about 4e-8 and the worst
+  deviation from glmnet is 1.3e-7. A covariate with a large mean and a small
+  spread is centred inside the fit, so it takes fewer coordinate passes.
+  `ElasticNetLogisticConfig`, `PropensityEstimator` and the fit results keep
+  their fields and defaults. The plain GLM propensity path and the matching
+  engine are unchanged, and no matched set or golden moves.
+- The dependencies on epistat-stats and epistat-rng are raised to 0.2.3 and
+  0.1.3, and epistat-glm 0.1.1 is added.
+
 ## [0.7.0] - 2026-11-19
 
 ### Changed
