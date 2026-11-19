@@ -1,6 +1,6 @@
 [package]
 name = "cohort_matching"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 authors = ["Tobias Kragholm"]
 license = "MIT OR Apache-2.0"
@@ -30,11 +30,10 @@ ordered-float = "5"
 chrono = { version = "0.4", features = ["serde"] }
 faer = { version = "0.24", default-features = false, features = ["std", "rayon", "nightly"] }
 itertools = "0.14"
-epistat-stats = "0.1.1"
-epistat-linalg = "0.2.0"
-epistat-rng = "0.1.1"
-# Git revision until epistat-register is released with the age module.
-epistat-register = { git = "https://github.com/tkragholm/epistat", rev = "b1198bfd38873e053b411578dd44d70723abab29" }
+epistat-stats = "0.2.0"
+epistat-linalg = "0.3.0"
+epistat-rng = "0.1.2"
+epistat-register = "0.1.1"
 serde = { version = "1.0.228", features = ["derive"] }
 
 [dev-dependencies]
