@@ -47,7 +47,7 @@ pub struct LogisticRegressionConfig {
     /// Maximum IRLS iterations.
     #[builder(default = 100_usize)]
     pub max_iter: usize,
-    /// Convergence tolerance on coefficient max absolute change.
+    /// Convergence tolerance on the largest variance-weighted squared coefficient change.
     #[builder(default = 1e-8_f64)]
     pub tolerance: f64,
     /// L2 penalty added to non-intercept coefficients.
@@ -75,24 +75,26 @@ impl Default for LogisticRegressionConfig {
 /// `lambda * (alpha * |b|_1 + (1 - alpha) / 2 * |b|_2^2)`, with the intercept
 /// unpenalised and the covariates used as given, not standardised. This is the
 /// objective of R's `glmnet(family = "binomial", standardize = FALSE)`, and the
-/// coefficients agree with it to about 1e-7 once the fit has converged
+/// coefficients agree with it to about 1e-7
 /// (`tests/glmnet_reference.rs`). `glmnet`'s default `standardize = TRUE`
 /// penalises the standardised coefficients and gives different estimates.
 ///
-/// The optimiser is a proximal gradient with one fixed step of
-/// `step_scale / (m / 4 + lambda * (1 - alpha))`, where `m` is the largest
-/// squared row norm of the design. It therefore converges slowly when a covariate
-/// has a large scale or the covariates are strongly correlated. With the
-/// defaults (500 iterations, tolerance 1e-7) it can stop before the optimum,
-/// and then [`PropensityScoreEstimate::converged`](crate::PropensityScoreEstimate::converged)
-/// is `false`. Centre and scale the covariates, or raise `max_iter`, when it is.
+/// The optimiser is IRLS with cyclic coordinate descent on the penalised
+/// weighted least-squares approximation, as in `glmnet` (Friedman, Hastie and
+/// Tibshirani 2010, doi:10.18637/jss.v033.i01). It stops when the largest
+/// change of a coefficient, squared and weighted by the weighted variance of its
+/// column, is at most `tolerance`, so the rule does not depend on covariate
+/// scale. With a column standardised to unit weighted variance, the default
+/// 1e-20 corresponds to a coefficient change of about 1e-10. The defaults
+/// converge on correlated designs and on covariates of large scale. [`PropensityScoreEstimate::converged`](crate::PropensityScoreEstimate::converged)
+/// is `false` when `max_iter` IRLS steps are not enough.
 #[derive(bon::Builder, Debug, Clone, Copy)]
 pub struct ElasticNetLogisticConfig {
-    /// Maximum proximal-gradient iterations.
-    #[builder(default = 500_usize)]
+    /// Maximum IRLS steps.
+    #[builder(default = 100_usize)]
     pub max_iter: usize,
-    /// Convergence tolerance on coefficient max absolute change.
-    #[builder(default = 1e-7_f64)]
+    /// Convergence tolerance on the largest variance-weighted squared coefficient change.
+    #[builder(default = 1e-20_f64)]
     pub tolerance: f64,
     /// Elastic-net penalty strength.
     #[builder(default = 1e-2_f64)]
@@ -100,9 +102,6 @@ pub struct ElasticNetLogisticConfig {
     /// Elastic-net mixing parameter (0 = ridge, 1 = lasso).
     #[builder(default = 0.5_f64)]
     pub alpha: f64,
-    /// Step-size scaling factor.
-    #[builder(default = 1.0_f64)]
-    pub step_scale: f64,
     /// Numeric stability clipping for predicted probabilities.
     #[builder(default = 1e-8_f64)]
     pub probability_clip: f64,
@@ -111,11 +110,10 @@ pub struct ElasticNetLogisticConfig {
 impl Default for ElasticNetLogisticConfig {
     fn default() -> Self {
         Self {
-            max_iter: 500,
-            tolerance: 1e-7,
+            max_iter: 100,
+            tolerance: 1e-20,
             lambda: 1e-2,
             alpha: 0.5,
-            step_scale: 1.0,
             probability_clip: 1e-8,
         }
     }

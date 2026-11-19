@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The elastic-net logistic fit is IRLS with cyclic coordinate descent, as in
+  glmnet, instead of a fixed-step proximal gradient. It converges on correlated
+  designs and on covariates of large scale, and agrees with glmnet
+  (`standardize = FALSE`) to 2e-7 on the reference designs. The defaults of
+  `ElasticNetLogisticConfig` are `max_iter` 100 (IRLS steps) and `tolerance`
+  1e-20, which bounds the largest variance-weighted squared coefficient change.
+  Breaking: the `step_scale` field of `ElasticNetLogisticConfig` is removed.
 - Breaking: a balance statistic that does not exist is `None` instead of 0.
   The fields of `NumericBalance`, `CategoricalLevelBalance` and
   `CategoricalBalance` that are statistics (means, proportions, standardized
