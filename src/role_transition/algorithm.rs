@@ -8,7 +8,8 @@ use crate::types::{
     CommonSupport, CommonSupportFailureReason, InvalidCriteriaReason, MatchDiagnostics,
     MatchOutcome, MatchRatio, MatchedPair, MatchingCriteria, RoleTransitionOptions, UniqueValueId,
 };
-use chrono::{Months, NaiveDate};
+use chrono::{Datelike, NaiveDate};
+use epistat_register::{AgeRule, age_in_years};
 use itertools::Itertools;
 use rapidhash::RapidHashMap;
 use std::collections::HashSet;
@@ -541,19 +542,17 @@ fn eligible_case_indices<R: RoleIndexedRecord, P: RiskSetPolicy<R> + ?Sized>(
         .collect_vec()
 }
 
+/// `NaiveDate::num_days_from_ce` of 1970-01-01.
+const UNIX_EPOCH_DAYS_FROM_CE: i32 = 719_163;
+
 fn is_case_before_age_limit<R: RoleIndexedRecord>(row: &R, age_limit_years: u8) -> bool {
     let Some(event_date) = row.event_date() else {
         return false;
     };
-    let age_limit_months = u32::from(age_limit_years) * 12;
-    let Some(age_limit_date) = row
-        .birth_date()
-        .checked_add_months(Months::new(age_limit_months))
-    else {
-        return false;
-    };
-
-    event_date < age_limit_date
+    let day = |date: NaiveDate| i64::from(date.num_days_from_ce() - UNIX_EPOCH_DAYS_FROM_CE);
+    // An event before birth is below any age limit.
+    age_in_years(day(row.birth_date()), day(event_date), AgeRule::CivilYears)
+        .is_none_or(|age| age < u32::from(age_limit_years))
 }
 
 fn default_control_is_at_risk<R: RoleIndexedRecord>(
@@ -571,7 +570,34 @@ mod tests {
     use crate::date;
     use crate::matching::{DeterministicSelection, DistanceConfig, RandomSelection};
     use crate::types::{AgeLimitYears, BaseRecord, Estimand, MatchRatio, RoleTransitionRecord};
-    use chrono::NaiveDate;
+    use chrono::{Months, NaiveDate};
+
+    #[test]
+    fn age_limit_agrees_with_adding_whole_years_to_the_birth_date() {
+        for birth in [
+            NaiveDate::from_ymd_opt(2000, 2, 29).unwrap(),
+            NaiveDate::from_ymd_opt(2001, 2, 28).unwrap(),
+            NaiveDate::from_ymd_opt(2003, 12, 31).unwrap(),
+            NaiveDate::from_ymd_opt(2004, 3, 1).unwrap(),
+        ] {
+            for limit in [1_u8, 4, 6, 18] {
+                let limit_date = birth
+                    .checked_add_months(Months::new(u32::from(limit) * 12))
+                    .unwrap();
+                let first = birth - chrono::Duration::days(400);
+                for offset in 0..9000 {
+                    let event = first + chrono::Duration::days(offset);
+                    let row =
+                        RoleTransitionRecord::from_record(BaseRecord::new("a", birth), Some(event));
+                    assert_eq!(
+                        is_case_before_age_limit(&row, limit),
+                        event < limit_date,
+                        "{birth} {event} {limit}"
+                    );
+                }
+            }
+        }
+    }
 
     fn ratio(value: usize) -> MatchRatio {
         MatchRatio::new(value).expect("non-zero ratio")

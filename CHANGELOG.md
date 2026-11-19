@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The age limit of role-transition matching is computed by epistat-register's
+  `age_in_years` with civil years, the rule it used before; results are
+  unchanged.
+
 ## [0.6.0] - 2026-11-19
 
 ### Changed

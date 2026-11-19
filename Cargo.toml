@@ -33,6 +33,8 @@ itertools = "0.14"
 epistat-stats = "0.1.1"
 epistat-linalg = "0.2.0"
 epistat-rng = "0.1.1"
+# Git revision until epistat-register is released with the age module.
+epistat-register = { git = "https://github.com/tkragholm/epistat", rev = "a6068fe6d8eece35b88aa71866f449c2aa8ab62a" }
 serde = { version = "1.0.228", features = ["derive"] }
 
 [dev-dependencies]
