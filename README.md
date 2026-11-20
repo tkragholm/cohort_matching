@@ -1,5 +1,12 @@
 # cohort_matching
 
+**This crate has moved.** It continues as
+[`epistat-matching`](https://crates.io/crates/epistat-matching) in the
+[epistat](https://github.com/tkragholm/epistat) workspace. epistat-matching
+0.1.0 is cohort_matching 0.8.0 under the new name, with `epistat_matching` in
+place of `cohort_matching` in paths. This repository receives no further
+changes.
+
 Caliper-based cohort matching for observational studies.
 
 `cohort_matching` provides a robust engine for creating matched cohorts in observational research. It supports both standard anchor-to-candidate matching and longitudinal role-transition (risk-set) matching.
